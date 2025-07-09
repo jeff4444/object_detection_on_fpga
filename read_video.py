@@ -6,7 +6,7 @@ import vart
 import xir
 
 # Helper: extract the DPU subgraph from the compiled .xmodel
-def get_child_subgraph_dpu(graph: "xir.Graph"):
+def get_child_subgraph_dpu(graph):
     root = graph.get_root_subgraph()
     if root.is_leaf:
         return []
