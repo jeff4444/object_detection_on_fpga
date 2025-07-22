@@ -9,6 +9,7 @@ import math
 import threading
 import time
 import sys
+import argparse
 
 # Load .xmodel and create DPU runner
 def get_dpu_runner(model_path):
@@ -29,7 +30,7 @@ def get_child_subgraph_dpu(graph):
 def preprocess(img, input_height, input_width):
     resized = cv2.resize(img, (input_width, input_height))
     resized = resized.astype(np.float32)
-    resized -= np.array([123.68, 116.78, 103.94], dtype=np.float32)  # Mean subtraction (ImageNet)
+    resized -= np.array([123.68, 116.78, 103.94], dtype=np.float32)  # ImageNet mean subtraction
     return resized
 
 # Postprocess output (assuming softmax output for classification)
@@ -41,21 +42,28 @@ def postprocess(output_data):
     return top_class, confidence
 
 def main():
-    model_path = "resnet50.xmodel"  # Change to your model
+    parser = argparse.ArgumentParser(description="Run video through DPU model and display output.")
+    parser.add_argument('--model', required=True, help='Path to the .xmodel file')
+    parser.add_argument('--input', default='/dev/video0', help='Video input source (e.g., /dev/video0 or 0)')
+    args = parser.parse_args()
+
+    model_path = args.model
+    video_source = int(args.input) if args.input.isdigit() else args.input
+
     runner = get_dpu_runner(model_path)
     input_tensors = runner.get_input_tensors()
     output_tensors = runner.get_output_tensors()
 
     # Get input shape
-    input_shape = input_tensors[0].dims  # NCHW or NHWC
+    input_shape = input_tensors[0].dims
     batch_size = input_shape[0]
     input_height = input_shape[1]
     input_width = input_shape[2]
     input_channels = input_shape[3]
 
-    cap = cv2.VideoCapture("/dev/video0")
+    cap = cv2.VideoCapture(video_source)
     if not cap.isOpened():
-        print("Failed to open video device.")
+        print(f"Failed to open video source: {video_source}")
         return
 
     while True:
@@ -66,14 +74,15 @@ def main():
 
         img = preprocess(frame, input_height, input_width)
         img = np.expand_dims(img, axis=0)  # Add batch dimension
-        img = np.transpose(img, (0, 3, 1, 2))  # NHWC -> NCHW if needed
+        img = np.transpose(img, (0, 3, 1, 2))  # NHWC to NCHW
 
         input_data = [np.array(img, dtype=np.float32)]
-        job_id = runner.execute_async(input_data, [np.empty(output_tensors[0].dims, dtype=np.float32)])
+        output_data = [np.empty(output_tensors[0].dims, dtype=np.float32)]
+
+        job_id = runner.execute_async(input_data, output_data)
         runner.wait(job_id)
 
-        output_data = input_data[1][0].flatten()
-        label, conf = postprocess(output_data)
+        label, conf = postprocess(output_data[0].flatten())
         label_text = f"Label: {label}, Conf: {conf:.2f}"
         cv2.putText(frame, label_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
