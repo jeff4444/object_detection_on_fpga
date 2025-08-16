@@ -1,0 +1,13 @@
+train: /Users/jeffallo/Documents/main_projects/object_detection/vehicles_dataset/train/images
+val: /Users/jeffallo/Documents/main_projects/object_detection/vehicles_dataset/valid/images
+test: /Users/jeffallo/Documents/main_projects/object_detection/vehicles_dataset/test/images
+
+nc: 6
+names: ['2-wheelers', 'auto', 'bus', 'car', 'pedestrian', 'truck']
+
+roboflow:
+  workspace: nish-fnuat
+  project: vehicle_detection-m5pa5-jynho
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/nish-fnuat/vehicle_detection-m5pa5-jynho/dataset/1
