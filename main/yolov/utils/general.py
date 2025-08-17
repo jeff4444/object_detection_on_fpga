@@ -174,7 +174,8 @@ def user_config_dir(dir="Ultralytics", env_var="YOLOV5_CONFIG_DIR"):
     """Returns user configuration directory path, preferring environment variable `YOLOV5_CONFIG_DIR` if set, else OS-
     specific.
     """
-    if env := os.getenv(env_var):
+    env = os.getenv(env_var)
+    if env:
         path = Path(env)  # use environment variable
     else:
         cfg = {"Windows": "AppData/Roaming", "Linux": ".config", "Darwin": "Library/Application Support"}  # 3 OS dirs
