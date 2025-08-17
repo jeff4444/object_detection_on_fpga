@@ -2,24 +2,24 @@
 # *.jpg
 # *.jpeg
 # *.png
-*.bmp
-*.tif
-*.tiff
-*.heic
+#*.bmp
+#*.tif
+#*.tiff
+#*.heic
 # *.JPG
 # *.JPEG
 # *.PNG
-*.BMP
-*.TIF
-*.TIFF
-*.HEIC
-*.mp4
-*.mov
-*.MOV
-*.avi
-*.data
-*.json
-*.cfg
+#*.BMP
+#*.TIF
+#*.TIFF
+#*.HEIC
+#*.mp4
+#*.mov
+#*.MOV
+#*.avi
+#*.data
+#*.json
+#*.cfg
 !setup.cfg
 !cfg/yolov3*.cfg
 
@@ -76,7 +76,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 env/
-build/
+#build/
 develop-eggs/
 dist/
 downloads/
@@ -254,4 +254,4 @@ atlassian-ide-plugin.xml
 com_crashlytics_export_strings.xml
 crashlytics.properties
 crashlytics-build.properties
-fabric.properties
+fabric.properties 
