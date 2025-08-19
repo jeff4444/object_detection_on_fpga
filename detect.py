@@ -65,8 +65,11 @@ def main():
     runner = get_dpu_runner(args.model)
 
     # IMPORTANT: use TensorBuffers from the runner (not raw numpy)
-    inputs_tb  = runner.get_inputs()
-    outputs_tb = runner.get_outputs()
+    from vart import TensorBuffer
+    in_tensors  = runner.get_input_tensors()
+    out_tensors = runner.get_output_tensors()
+    inputs_tb   = [TensorBuffer(t) for t in in_tensors]
+    outputs_tb  = [TensorBuffer(t) for t in out_tensors]
 
     # Crash-safe model I/O info
     print("========== MODEL IO INFO ==========")
