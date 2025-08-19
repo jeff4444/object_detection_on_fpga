@@ -56,7 +56,7 @@ ANCHORS = [
     (116,90, 156,198, 373,326)  # scale 2 (20x20)
 ]
 NUM_CLASSES = 6            # inferred from 33 -> 3*(5+nc) => nc=6
-CONF_THRESH = 0.3
+CONF_THRESH = 0.1          # Lowered from 0.3 to catch more detections
 NMS_THRESH = 0.45
 
 # ---- utils ----
@@ -129,6 +129,8 @@ def decode_yolov5_outputs(output_arrays, out_tensors, input_img_shape):
     """
     H_in, W_in = input_img_shape
     detections = []
+    total_candidates = 0
+    high_score_candidates = 0
 
     # For each scale
     for scale_idx, out in enumerate(output_arrays):
@@ -138,6 +140,8 @@ def decode_yolov5_outputs(output_arrays, out_tensors, input_img_shape):
         out_f = out_f[0]  # remove batch dim -> (gh, gw, 33)
         gh, gw, ch = out_f.shape
         assert ch == 3 * (5 + NUM_CLASSES), f"unexpected channels {ch}"
+
+        print(f"Scale {scale_idx}: grid={gh}x{gw}, dequantized range=[{out_f.min():.3f}, {out_f.max():.3f}]")
 
         # stride = input_size / grid_size
         stride_h = H_in / gh
@@ -166,7 +170,10 @@ def decode_yolov5_outputs(output_arrays, out_tensors, input_img_shape):
                     class_probs = sigmoid(cls_logits)  # apply sigmoid to class logits
                     class_id = int(np.argmax(class_probs))
                     class_score = float(class_probs[class_id]) * float(objectness)
+                    
+                    total_candidates += 1
                     if class_score >= CONF_THRESH:
+                        high_score_candidates += 1
                         x1, y1, x2, y2 = xywh_to_xyxy(cx, cy, bw, bh)
                         # clip to image
                         x1 = max(0.0, min(W_in - 1.0, x1))
@@ -174,6 +181,12 @@ def decode_yolov5_outputs(output_arrays, out_tensors, input_img_shape):
                         x2 = max(0.0, min(W_in - 1.0, x2))
                         y2 = max(0.0, min(H_in - 1.0, y2))
                         detections.append((class_id, class_score, x1, y1, x2, y2))
+                        
+                        # Print first few detections for debugging
+                        if len(detections) <= 3:
+                            print(f"  Detection: class={class_id}, score={class_score:.3f}, box=({x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f})")
+
+    print(f"Total candidates: {total_candidates}, High score candidates: {high_score_candidates}")
 
     # now run class-wise NMS
     final_dets = []
@@ -367,6 +380,12 @@ def main():
         # Process YOLOv5 outputs to get detections
         print("\n========== YOLOv5 DETECTIONS ==========")
         try:
+            # Print fix_point info for output tensors
+            print("Output tensor fix_point info:")
+            for i, t in enumerate(out_tensors):
+                fx = safe_get_attr(t, "fix_point", None)
+                print(f"  OUTPUT[{i}] fix_point: {fx}")
+            
             model_input_shape = (H, W)
             dets = decode_yolov5_outputs(output_arrays, out_tensors, model_input_shape)
             print(f"Found {len(dets)} detections:")
