@@ -56,7 +56,7 @@ ANCHORS = [
     (116,90, 156,198, 373,326)  # scale 2 (20x20)
 ]
 NUM_CLASSES = 6            # inferred from 33 -> 3*(5+nc) => nc=6
-CONF_THRESH = 0.1          # Lowered from 0.3 to catch more detections
+CONF_THRESH = 0.01         # Very low threshold to see what's happening
 NMS_THRESH = 0.45
 
 # ---- utils ----
@@ -185,6 +185,10 @@ def decode_yolov5_outputs(output_arrays, out_tensors, input_img_shape):
                         # Print first few detections for debugging
                         if len(detections) <= 3:
                             print(f"  Detection: class={class_id}, score={class_score:.3f}, box=({x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f})")
+                    
+                    # Track max scores for debugging
+                    if total_candidates <= 10:  # Print first 10 candidates
+                        print(f"    Candidate {total_candidates}: objectness={objectness:.3f}, max_class_prob={np.max(class_probs):.3f}, class_score={class_score:.3f}")
 
     print(f"Total candidates: {total_candidates}, High score candidates: {high_score_candidates}")
 
