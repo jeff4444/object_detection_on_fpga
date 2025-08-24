@@ -197,7 +197,8 @@ def random_perspective(
         else:  # affine
             im = cv2.warpAffine(im, M[:2], dsize=(width, height), borderValue=(114, 114, 114))
 
-    if n := len(targets):
+    n = len(targets)
+    if n:
         use_segments = any(x.any() for x in segments) and len(segments) == n
         new = np.zeros((n, 4))
         if use_segments:  # warp segments

@@ -34,7 +34,7 @@ import torch
 import torchvision
 import yaml
 from ultralytics.utils.checks import check_requirements
-from ultralytics.utils.patches import torch_load
+from utils.patches import torch_load
 
 from utils import TryExcept, emojis
 from utils.downloads import curl_download, gsutil_getsize
@@ -162,7 +162,8 @@ def user_config_dir(dir="Ultralytics", env_var="YOLOV5_CONFIG_DIR"):
     """Returns user configuration directory path, prefers `env_var` if set, else uses OS-specific path, creates
     directory if needed.
     """
-    if env := os.getenv(env_var):
+    env = os.getenv(env_var)
+    if env:
         path = Path(env)  # use environment variable
     else:
         cfg = {"Windows": "AppData/Roaming", "Linux": ".config", "Darwin": "Library/Application Support"}  # 3 OS dirs
