@@ -306,8 +306,16 @@ def main():
         img = cv2.resize(frame, (W, H)).astype(np.float32)
         # uncomment if model expects RGB:
         # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        # example normalization (adapt to training pipeline)
-        img = img - np.array([123.68, 116.78, 103.94], dtype=np.float32)
+        
+        # Try different normalization approaches
+        # Option 1: Standard ImageNet normalization (commented out)
+        # img = img - np.array([123.68, 116.78, 103.94], dtype=np.float32)
+        
+        # Option 2: Simple 0-1 normalization (uncomment to try)
+        # img = img / 255.0
+        
+        # Option 3: YOLOv5 standard normalization (trying this)
+        img = img / 255.0  # normalize to 0-1
 
         if layout == "NCHW":
             img = np.transpose(img, (2, 0, 1))
@@ -336,6 +344,12 @@ def main():
         # print a small data sample
         flat = input_arrays[0].flatten()
         print("prepared_input sample (first 16 values):", flat[:16].tolist())
+        
+        # Debug: print original frame info and preprocessing steps
+        print(f"Original frame: shape={frame.shape}, dtype={frame.dtype}, range=[{frame.min()}, {frame.max()}]")
+        print(f"After resize: shape={img.shape}, dtype={img.dtype}, range=[{img.min():.1f}, {img.max():.1f}]")
+        print(f"After normalization: range=[{img.min():.1f}, {img.max():.1f}]")
+        print(f"After quantization: range=[{batched_q.min()}, {batched_q.max()}]")
 
         # Attempt synchronous execute() first (older bindings sometimes implement this)
         try:

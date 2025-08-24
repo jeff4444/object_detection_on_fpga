@@ -7,24 +7,28 @@ import threading
 
 
 def emojis(str=""):
-    """Returns an emoji-safe version of a string, stripped of emojis on Windows platforms."""
+    """Returns platform-dependent emoji-safe version of str; ignores emojis on Windows, else returns original str."""
     return str.encode().decode("ascii", "ignore") if platform.system() == "Windows" else str
 
 
 class TryExcept(contextlib.ContextDecorator):
-    """A context manager and decorator for error handling that prints an optional message with emojis on exception."""
+    """A context manager and decorator for handling exceptions with optional custom messages."""
 
     def __init__(self, msg=""):
-        """Initializes TryExcept with an optional message, used as a decorator or context manager for error handling."""
+        """Initializes TryExcept with optional custom message, used as decorator or context manager for exception
+        handling.
+        """
         self.msg = msg
 
     def __enter__(self):
-        """Enter the runtime context related to this object for error handling with an optional message."""
+        """Begin exception-handling block, optionally customizing exception message when used with TryExcept context
+        manager.
+        """
         pass
 
     def __exit__(self, exc_type, value, traceback):
-        """Context manager exit method that prints an error message with emojis if an exception occurred, always returns
-        True.
+        """Ends exception-handling block, optionally prints custom message with exception, suppressing exceptions within
+        context.
         """
         if value:
             print(emojis(f"{self.msg}{': ' if self.msg else ''}{value}"))
@@ -32,10 +36,18 @@ class TryExcept(contextlib.ContextDecorator):
 
 
 def threaded(func):
-    """Decorator @threaded to run a function in a separate thread, returning the thread instance."""
+    """
+    Decorates a function to run in a separate thread, returning the thread object.
+
+    Usage: @threaded.
+    """
 
     def wrapper(*args, **kwargs):
-        """Runs the decorated function in a separate daemon thread and returns the thread instance."""
+        """
+        Runs the decorated function in a separate thread and returns the thread object.
+
+        Usage: @threaded.
+        """
         thread = threading.Thread(target=func, args=args, kwargs=kwargs, daemon=True)
         thread.start()
         return thread
@@ -44,11 +56,7 @@ def threaded(func):
 
 
 def join_threads(verbose=False):
-    """
-    Joins all daemon threads, optionally printing their names if verbose is True.
-
-    Example: atexit.register(lambda: join_threads())
-    """
+    """Joins all daemon threads, excluding the main thread, with an optional verbose flag for logging."""
     main_thread = threading.current_thread()
     for t in threading.enumerate():
         if t is not main_thread:
@@ -58,7 +66,7 @@ def join_threads(verbose=False):
 
 
 def notebook_init(verbose=True):
-    """Initializes notebook environment by checking requirements, cleaning up, and displaying system info."""
+    """Initializes notebook environment by checking hardware, software requirements, and cleaning up if in Colab."""
     print("Checking setup...")
 
     import os

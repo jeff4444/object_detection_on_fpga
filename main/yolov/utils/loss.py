@@ -8,25 +8,23 @@ from utils.metrics import bbox_iou
 from utils.torch_utils import de_parallel
 
 
-def smooth_BCE(eps=0.1):
-    """Returns label smoothing BCE targets for reducing overfitting; pos: `1.0 - 0.5*eps`, neg: `0.5*eps`. For details see https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441."""
+def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
+    """Applies label smoothing to BCE targets, returning smoothed positive/negative labels; eps default is 0.1."""
     return 1.0 - 0.5 * eps, 0.5 * eps
 
 
 class BCEBlurWithLogitsLoss(nn.Module):
-    """Modified BCEWithLogitsLoss to reduce missing label effects in YOLOv5 training with optional alpha smoothing."""
+    """Implements BCEWithLogitsLoss with adjustments to mitigate missing label effects using an alpha parameter."""
 
     def __init__(self, alpha=0.05):
-        """Initializes a modified BCEWithLogitsLoss with reduced missing label effects, taking optional alpha smoothing
-        parameter.
-        """
+        """Initializes BCEBlurWithLogitsLoss with alpha to reduce missing label effects; default alpha is 0.05."""
         super().__init__()
         self.loss_fcn = nn.BCEWithLogitsLoss(reduction="none")  # must be nn.BCEWithLogitsLoss()
         self.alpha = alpha
 
     def forward(self, pred, true):
-        """Computes modified BCE loss for YOLOv5 with reduced missing label effects, taking pred and true tensors,
-        returns mean loss.
+        """Calculates modified BCEWithLogitsLoss factoring in missing labels, taking `pred` logits and `true` labels as
+        inputs.
         """
         loss = self.loss_fcn(pred, true)
         pred = torch.sigmoid(pred)  # prob from logits
@@ -38,11 +36,11 @@ class BCEBlurWithLogitsLoss(nn.Module):
 
 
 class FocalLoss(nn.Module):
-    """Applies focal loss to address class imbalance by modifying BCEWithLogitsLoss with gamma and alpha parameters."""
+    """Implements Focal Loss to address class imbalance by modulating the loss based on prediction confidence."""
 
     def __init__(self, loss_fcn, gamma=1.5, alpha=0.25):
-        """Initializes FocalLoss with specified loss function, gamma, and alpha values; modifies loss reduction to
-        'none'.
+        """Initializes FocalLoss with specified loss function, gamma, and alpha for enhanced training on imbalanced
+        datasets.
         """
         super().__init__()
         self.loss_fcn = loss_fcn  # must be nn.BCEWithLogitsLoss()
@@ -52,7 +50,9 @@ class FocalLoss(nn.Module):
         self.loss_fcn.reduction = "none"  # required to apply FL to each element
 
     def forward(self, pred, true):
-        """Calculates the focal loss between predicted and true labels using a modified BCEWithLogitsLoss."""
+        """Computes the focal loss between `pred` and `true` using specific alpha and gamma, not applying the modulating
+        factor.
+        """
         loss = self.loss_fcn(pred, true)
         # p_t = torch.exp(-loss)
         # loss *= self.alpha * (1.000001 - p_t) ** self.gamma  # non-zero power for gradient stability
@@ -73,10 +73,12 @@ class FocalLoss(nn.Module):
 
 
 class QFocalLoss(nn.Module):
-    """Implements Quality Focal Loss to address class imbalance by modulating loss based on prediction confidence."""
+    """Implements Quality Focal Loss to handle class imbalance with a modulating factor and alpha."""
 
     def __init__(self, loss_fcn, gamma=1.5, alpha=0.25):
-        """Initializes Quality Focal Loss with given loss function, gamma, alpha; modifies reduction to 'none'."""
+        """Initializes QFocalLoss with specified loss function, gamma, and alpha for element-wise focal loss
+        application.
+        """
         super().__init__()
         self.loss_fcn = loss_fcn  # must be nn.BCEWithLogitsLoss()
         self.gamma = gamma
@@ -85,8 +87,8 @@ class QFocalLoss(nn.Module):
         self.loss_fcn.reduction = "none"  # required to apply FL to each element
 
     def forward(self, pred, true):
-        """Computes the focal loss between `pred` and `true` using BCEWithLogitsLoss, adjusting for imbalance with
-        `gamma` and `alpha`.
+        """Computes focal loss between predictions and true labels using configured loss function, `gamma`, and
+        `alpha`.
         """
         loss = self.loss_fcn(pred, true)
 
@@ -104,13 +106,13 @@ class QFocalLoss(nn.Module):
 
 
 class ComputeLoss:
-    """Computes the total loss for YOLOv5 model predictions, including classification, box, and objectness losses."""
+    """Computes the total loss for YOLO models by aggregating classification, box regression, and objectness losses."""
 
     sort_obj_iou = False
 
     # Compute losses
     def __init__(self, model, autobalance=False):
-        """Initializes ComputeLoss with model and autobalance option, autobalances losses if True."""
+        """Initializes ComputeLoss with model's device and hyperparameters, and sets autobalance."""
         device = next(model.parameters()).device  # get model device
         h = model.hyp  # hyperparameters
 
@@ -137,82 +139,60 @@ class ComputeLoss:
         self.device = device
 
     def __call__(self, p, targets):  # predictions, targets
-        """
-        Forward pass for YOLOv5 loss, compatible with Vitis-AI (no view/permute).
-        p: list of predictions per layer, each of shape (batch, channels, ny, nx)
-        targets: ground truth boxes and classes
-        """
-        device = self.device
-        lcls = torch.zeros(1, device=device)  # class loss
-        lbox = torch.zeros(1, device=device)  # box loss
-        lobj = torch.zeros(1, device=device)  # object loss
+        """Computes loss given predictions and targets, returning class, box, and object loss as tensors."""
+        lcls = torch.zeros(1, device=self.device)  # class loss
+        lbox = torch.zeros(1, device=self.device)  # box loss
+        lobj = torch.zeros(1, device=self.device)  # object loss
+        tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
 
-        # Build targets for each layer
-        tcls, tbox, indices, anchors = self.build_targets(p, targets)
-
+        # Losses
         for i, pi in enumerate(p):  # layer index, layer predictions
-            # Shape: (batch, channels, ny, nx)
-            bs, c, ny, nx = pi.shape
-            na = self.na
-            no = c // self.na
+            b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
+            tobj = torch.zeros(pi.shape[:4], dtype=pi.dtype, device=self.device)  # target obj
 
-            b, a, gj, gi = indices[i]  # targets for this layer
-            tobj = torch.zeros(bs, na, ny, nx, dtype=pi.dtype, device=device)
+            if n := b.shape[0]:
+                # pxy, pwh, _, pcls = pi[b, a, gj, gi].tensor_split((2, 4, 5), dim=1)  # faster, requires torch 1.8.0
+                pxy, pwh, _, pcls = pi[b, a, gj, gi].split((2, 2, 1, self.nc), 1)  # target-subset of predictions
 
-            if b.shape[0]:  # only compute if there are targets
-                # Reshape without permute/view
-                pi_flat = pi.reshape(bs, na, no, ny, nx)  # (batch, anchors, channels, ny, nx)
+                # Regression
+                pxy = pxy.sigmoid() * 2 - 0.5
+                pwh = (pwh.sigmoid() * 2) ** 2 * anchors[i]
+                pbox = torch.cat((pxy, pwh), 1)  # predicted box
+                iou = bbox_iou(pbox, tbox[i], CIoU=True).squeeze()  # iou(prediction, target)
+                lbox += (1.0 - iou).mean()  # iou loss
 
-                # Select only the relevant predictions for targets
-                p_selected = pi_flat[b, a, :, gj, gi]  # shape: (num_targets, channels)
-
-                # Split predictions
-                pxy = p_selected[:, 0:2].sigmoid() * 2 - 0.5
-                pwh = (p_selected[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
-                pcls = p_selected[:, 5:5+self.nc]  # class predictions
-
-                # Compute box loss
-                pbox = torch.cat((pxy, pwh), dim=1)
-                iou = bbox_iou(pbox, tbox[i], CIoU=True).squeeze()
-                lbox += (1.0 - iou).mean()
-
-                # Objectness target
+                # Objectness
                 iou = iou.detach().clamp(0).type(tobj.dtype)
                 if self.sort_obj_iou:
                     j = iou.argsort()
                     b, a, gj, gi, iou = b[j], a[j], gj[j], gi[j], iou[j]
                 if self.gr < 1:
                     iou = (1.0 - self.gr) + self.gr * iou
-                tobj[b, a, gj, gi] = iou  # assign objectness
+                tobj[b, a, gj, gi] = iou  # iou ratio
 
-                # Classification loss
-                if self.nc > 1:
-                    t = torch.full_like(pcls, self.cn, device=device)
-                    t[range(b.shape[0]), tcls[i]] = self.cp
-                    lcls += self.BCEcls(pcls, t)
+                # Classification
+                if self.nc > 1:  # cls loss (only if multiple classes)
+                    t = torch.full_like(pcls, self.cn, device=self.device)  # targets
+                    t[range(n), tcls[i]] = self.cp
+                    lcls += self.BCEcls(pcls, t)  # BCE
 
-            # Objectness loss for all anchors
-            obji = self.BCEobj(pi_flat[:, :, 4, :, :], tobj)
-            lobj += obji * self.balance[i]
-
-            # Optional autobalance
+            obji = self.BCEobj(pi[..., 4], tobj)
+            lobj += obji * self.balance[i]  # obj loss
             if self.autobalance:
                 self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
 
         if self.autobalance:
             self.balance = [x / self.balance[self.ssi] for x in self.balance]
-
-        # Scale losses
         lbox *= self.hyp["box"]
         lobj *= self.hyp["obj"]
         lcls *= self.hyp["cls"]
+        bs = tobj.shape[0]  # batch size
 
-        bs = p[0].shape[0]  # batch size
         return (lbox + lobj + lcls) * bs, torch.cat((lbox, lobj, lcls)).detach()
 
     def build_targets(self, p, targets):
-        """Prepares model targets from input targets (image,class,x,y,w,h) for loss computation, returning class, box,
-        indices, and anchors.
+        """Generates matching anchor targets for compute_loss() from given images and labels in format
+        (image,class,x,y,w,h).
         """
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
         tcls, tbox, indices, anch = [], [], [], []

@@ -1,6 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
-Validate a trained YOLOv5 segment model on a segment dataset.
+Validate a trained YOLOv3 segment model on a segment dataset.
 
 Usage:
     $ bash data/scripts/get_coco.sh --val --segments  # download COCO-segments val split (1G, 5000 images)
@@ -33,7 +33,7 @@ import torch
 from tqdm import tqdm
 
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[1]  # YOLOv5 root directory
+ROOT = FILE.parents[1]  # YOLOv3 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
@@ -71,9 +71,7 @@ from utils.torch_utils import de_parallel, select_device, smart_inference_mode
 
 
 def save_one_txt(predn, save_conf, shape, file):
-    """Saves detection results in txt format; includes class, xywh (normalized), optionally confidence if `save_conf` is
-    True.
-    """
+    """Saves detection results in normalized xywh format (with optional confidence) to a txt file."""
     gn = torch.tensor(shape)[[1, 0, 1, 0]]  # normalization gain whwh
     for *xyxy, conf, cls in predn.tolist():
         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
@@ -83,15 +81,11 @@ def save_one_txt(predn, save_conf, shape, file):
 
 
 def save_one_json(predn, jdict, path, class_map, pred_masks):
-    """
-    Saves a JSON file with detection results including bounding boxes, category IDs, scores, and segmentation masks.
-
-    Example JSON result: {"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}.
-    """
+    """Saves detection results in COCO JSON format, including bbox, category_id and segmentation if available."""
     from pycocotools.mask import encode
 
     def single_encode(x):
-        """Encodes binary mask arrays into RLE (Run-Length Encoding) format for JSON serialization."""
+        """Encodes a binary mask to COCO RLE format, converting counts to a UTF-8 string for JSON serialization."""
         rle = encode(np.asarray(x[:, :, None], order="F", dtype="uint8"))[0]
         rle["counts"] = rle["counts"].decode("utf-8")
         return rle
@@ -184,9 +178,7 @@ def run(
     compute_loss=None,
     callbacks=Callbacks(),
 ):
-    """Validates a YOLOv5 segmentation model on specified dataset, producing metrics, plots, and optional JSON
-    output.
-    """
+    """Validates a trained YOLOv3 segmentation model using a specified dataset and evaluation metrics."""
     if save_json:
         check_requirements("pycocotools>=2.0.6")
         process = process_mask_native  # more accurate
@@ -276,7 +268,7 @@ def run(
         "mAP50",
         "mAP50-95)",
     )
-    dt = Profile(device=device), Profile(device=device), Profile(device=device)
+    dt = Profile(), Profile(), Profile()
     metrics = Metrics()
     loss = torch.zeros(4, device=device)
     jdict, stats = [], []
@@ -447,9 +439,7 @@ def run(
 
 
 def parse_opt():
-    """Parses command line arguments for configuring YOLOv5 options like dataset path, weights, batch size, and
-    inference settings.
-    """
+    """Parses and validates command-line arguments for configuring model training or inference."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default=ROOT / "data/coco128-seg.yaml", help="dataset.yaml path")
     parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "yolov5s-seg.pt", help="model path(s)")
@@ -482,7 +472,9 @@ def parse_opt():
 
 
 def main(opt):
-    """Executes YOLOv5 tasks including training, validation, testing, speed, and study with configurable options."""
+    """Executes the primary function based on task, including training, validation, testing, speed, and study
+    benchmarks.
+    """
     check_requirements(ROOT / "requirements.txt", exclude=("tensorboard", "thop"))
 
     if opt.task in ("train", "val", "test"):  # run normally

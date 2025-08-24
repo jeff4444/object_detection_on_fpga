@@ -6,17 +6,19 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from utils.patches import torch_load
+from ultralytics.utils.patches import torch_load
 
 from utils.downloads import attempt_download
 
 
 class Sum(nn.Module):
-    """Weighted sum of 2 or more layers https://arxiv.org/abs/1911.09070."""
+    """Computes the weighted or unweighted sum of multiple input layers per https://arxiv.org/abs/1911.09070."""
 
-    def __init__(self, n, weight=False):
-        """Initializes a module to sum outputs of layers with number of inputs `n` and optional weighting, supporting 2+
-        inputs.
+    def __init__(self, n, weight=False):  # n: number of inputs
+        """
+        Initializes a module to compute weighted/unweighted sum of n inputs, with optional learning weights.
+
+        https://arxiv.org/abs/1911.09070
         """
         super().__init__()
         self.weight = weight  # apply weights boolean
@@ -25,7 +27,11 @@ class Sum(nn.Module):
             self.w = nn.Parameter(-torch.arange(1.0, n) / 2, requires_grad=True)  # layer weights
 
     def forward(self, x):
-        """Processes input through a customizable weighted sum of `n` inputs, optionally applying learned weights."""
+        """
+        Performs forward pass, blending `x` elements with optional learnable weights.
+
+        See https://arxiv.org/abs/1911.09070 for more.
+        """
         y = x[0]  # no weight
         if self.weight:
             w = torch.sigmoid(self.w) * 2
@@ -38,11 +44,11 @@ class Sum(nn.Module):
 
 
 class MixConv2d(nn.Module):
-    """Mixed Depth-wise Conv https://arxiv.org/abs/1907.09595."""
+    """Implements mixed depth-wise convolutions for efficient neural networks; see https://arxiv.org/abs/1907.09595."""
 
-    def __init__(self, c1, c2, k=(1, 3), s=1, equal_ch=True):
-        """Initializes MixConv2d with mixed depth-wise convolutional layers, taking input and output channels (c1, c2),
-        kernel sizes (k), stride (s), and channel distribution strategy (equal_ch).
+    def __init__(self, c1, c2, k=(1, 3), s=1, equal_ch=True):  # ch_in, ch_out, kernel, stride, ch_strategy
+        """Initializes MixConv2d with mixed depth-wise convolution layers; details at
+        https://arxiv.org/abs/1907.09595.
         """
         super().__init__()
         n = len(k)  # number of convolutions
@@ -61,24 +67,24 @@ class MixConv2d(nn.Module):
             [nn.Conv2d(c1, int(c_), k, s, k // 2, groups=math.gcd(c1, int(c_)), bias=False) for k, c_ in zip(k, c_)]
         )
         self.bn = nn.BatchNorm2d(c2)
-        self.act = nn.LeakyReLU(26/256, inplace=True)
+        self.act = nn.LeakyRelu(0.1, inplace=True)
 
     def forward(self, x):
-        """Performs forward pass by applying SiLU activation on batch-normalized concatenated convolutional layer
-        outputs.
-        """
+        """Applies a series of convolutions, batch normalization, and SiLU activation to input tensor `x`."""
         return self.act(self.bn(torch.cat([m(x) for m in self.m], 1)))
 
 
 class Ensemble(nn.ModuleList):
-    """Ensemble of models."""
+    """Combines outputs from multiple models to improve inference results."""
 
     def __init__(self):
-        """Initializes an ensemble of models to be used for aggregated predictions."""
+        """Initializes an ensemble of models to combine their outputs."""
         super().__init__()
 
     def forward(self, x, augment=False, profile=False, visualize=False):
-        """Performs forward pass aggregating outputs from an ensemble of models.."""
+        """Applies ensemble of models on input `x`, with options for augmentation, profiling, and visualization,
+        returning inference outputs.
+        """
         y = [module(x, augment, profile, visualize)[0] for module in self]
         # y = torch.stack(y).max(0)[0]  # max ensemble
         # y = torch.stack(y).mean(0)  # mean ensemble
@@ -87,11 +93,7 @@ class Ensemble(nn.ModuleList):
 
 
 def attempt_load(weights, device=None, inplace=True, fuse=True):
-    """
-    Loads and fuses an ensemble or single YOLOv5 model from weights, handling device placement and model adjustments.
-
-    Example inputs: weights=[a,b,c] or a single model weights=[a] or weights=a.
-    """
+    """Loads an ensemble or single model weights, supports device placement and model fusion."""
     from models.yolo import Detect, Model
 
     model = Ensemble()
@@ -107,11 +109,11 @@ def attempt_load(weights, device=None, inplace=True, fuse=True):
 
         model.append(ckpt.fuse().eval() if fuse and hasattr(ckpt, "fuse") else ckpt.eval())  # model in eval mode
 
-    # Module updates
+    # Module compatibility updates
     for m in model.modules():
         t = type(m)
         if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, Model):
-            m.inplace = inplace
+            m.inplace = inplace  # torch 1.7.0 compatibility
             if t is Detect and not isinstance(m.anchor_grid, list):
                 delattr(m, "anchor_grid")
                 setattr(m, "anchor_grid", [torch.zeros(1)] * m.nl)

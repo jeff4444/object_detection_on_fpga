@@ -9,7 +9,7 @@ from clearml.automation.optuna import OptimizerOptuna
 
 task = Task.init(
     project_name="Hyper-Parameter Optimization",
-    task_name="YOLOv5",
+    task_name="YOLOv3",
     task_type=Task.TaskTypes.optimizer,
     reuse_last_task_id=False,
 )
@@ -60,7 +60,7 @@ optimizer = HyperParameterOptimizer(
     # now we decide if we want to maximize it or minimize it (accuracy we maximize)
     objective_metric_sign="max",
     # let us limit the number of concurrent experiments,
-    # this in turn will make sure we don't bombard the scheduler with experiments.
+    # this in turn will make sure we do dont bombard the scheduler with experiments.
     # if we have an auto-scaler connected, this, by proxy, will limit the number of machine
     max_number_of_concurrent_tasks=1,
     # this is the optimizer class (actually doing the optimization)

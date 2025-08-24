@@ -2,24 +2,24 @@
 # *.jpg
 # *.jpeg
 # *.png
-#*.bmp
-#*.tif
-#*.tiff
-#*.heic
-# *.JPG
-# *.JPEG
-# *.PNG
-#*.BMP
-#*.TIF
-#*.TIFF
-#*.HEIC
-#*.mp4
-#*.mov
-#*.MOV
-#*.avi
-#*.data
-#*.json
-#*.cfg
+*.bmp
+*.tif
+*.tiff
+*.heic
+*.JPG
+*.JPEG
+*.PNG
+*.BMP
+*.TIF
+*.TIFF
+*.HEIC
+*.mp4
+*.mov
+*.MOV
+*.avi
+*.data
+*.json
+*.cfg
 !setup.cfg
 !cfg/yolov3*.cfg
 
@@ -51,18 +51,17 @@ VOC/
 # *.pt
 # *.pb
 # *.onnx
-# *.engine
-# *.mlmodel
-# *.mlpackage
-# *.torchscript
-# *.tflite
-# *.h5
-# *_saved_model/
-# *_web_model/
-# *_openvino_model/
-# *_paddle_model/
-# darknet53.conv.74
-# yolov3-tiny.conv.15
+*.engine
+*.mlmodel
+*.torchscript
+*.tflite
+*.h5
+*_saved_model/
+*_web_model/
+*_openvino_model/
+*_paddle_model/
+darknet53.conv.74
+yolov3-tiny.conv.15
 
 # GitHub Python GitIgnore ----------------------------------------------------------------------------------------------
 # Byte-compiled / optimized / DLL files
@@ -76,7 +75,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 env/
-#build/
+build/
 develop-eggs/
 dist/
 downloads/
@@ -254,4 +253,4 @@ atlassian-ide-plugin.xml
 com_crashlytics_export_strings.xml
 crashlytics.properties
 crashlytics-build.properties
-fabric.properties 
+fabric.properties

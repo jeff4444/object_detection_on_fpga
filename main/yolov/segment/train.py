@@ -1,6 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
-Train a YOLOv5 segment model on a segment dataset Models and datasets download automatically from the latest YOLOv5
+Train a YOLOv3 segment model on a segment dataset Models and datasets download automatically from the latest YOLOv3
 release.
 
 Usage - Single-GPU training:
@@ -35,7 +35,7 @@ from torch.optim import lr_scheduler
 from tqdm import tqdm
 
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[1]  # YOLOv5 root directory
+ROOT = FILE.parents[1]  # YOLOv3 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
@@ -97,11 +97,9 @@ WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
 GIT_INFO = check_git_info()
 
 
-def train(hyp, opt, device, callbacks):
-    """
-    Trains the YOLOv5 model on a dataset, managing hyperparameters, model optimization, logging, and validation.
-
-    `hyp` is path/to/hyp.yaml or hyp dictionary.
+def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
+    """Trains a segmentation model using the provided hyperparameters, options, and callbacks, handling multi-GPU
+    setups, data loading, logging, and validation.
     """
     (
         save_dir,
@@ -218,7 +216,7 @@ def train(hyp, opt, device, callbacks):
     else:
 
         def lf(x):
-            """Linear learning rate scheduler decreasing from 1 to hyp['lrf'] over 'epochs'."""
+            """Linear learning rate scheduler decreasing from 1 to hyp['lrf'] over the course of given epochs."""
             return (1 - x / epochs) * (1.0 - hyp["lrf"]) + hyp["lrf"]  # linear
 
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)  # plot_lr_scheduler(optimizer, scheduler, epochs)
@@ -543,11 +541,7 @@ def train(hyp, opt, device, callbacks):
 
 
 def parse_opt(known=False):
-    """
-    Parses command line arguments for training configurations, returning parsed arguments.
-
-    Supports both known and unknown args.
-    """
+    """Parses command line arguments for training configurations, supporting optional known args parsing."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", type=str, default=ROOT / "yolov5s-seg.pt", help="initial weights path")
     parser.add_argument("--cfg", type=str, default="", help="model.yaml path")
@@ -592,7 +586,9 @@ def parse_opt(known=False):
 
 
 def main(opt, callbacks=Callbacks()):
-    """Initializes training or evolution of YOLOv5 models based on provided configuration and options."""
+    """Initializes training or evolution of models with given options and callbacks, handling device setup and data
+    preparation.
+    """
     if RANK in {-1, 0}:
         print_args(vars(opt))
         check_git_status()
@@ -632,7 +628,7 @@ def main(opt, callbacks=Callbacks()):
     # DDP mode
     device = select_device(opt.device, batch_size=opt.batch_size)
     if LOCAL_RANK != -1:
-        msg = "is not compatible with YOLOv5 Multi-GPU DDP training"
+        msg = "is not compatible with YOLOv3 Multi-GPU DDP training"
         assert not opt.image_weights, f"--image-weights {msg}"
         assert not opt.evolve, f"--evolve {msg}"
         assert opt.batch_size != -1, f"AutoBatch with --batch-size -1 {msg}, please pass a valid --batch-size"
@@ -749,10 +745,8 @@ def main(opt, callbacks=Callbacks()):
 
 
 def run(**kwargs):
-    """
-    Executes YOLOv5 training with given parameters, altering options programmatically; returns updated options.
-
-    Example: import train; train.run(data='coco128.yaml', imgsz=320, weights='yolov5m.pt')
+    """Executes model training with specified configurations; see example: `train.run(data='coco128.yaml', imgsz=320,
+    weights='yolov5m.pt')`.
     """
     opt = parse_opt(True)
     for k, v in kwargs.items():

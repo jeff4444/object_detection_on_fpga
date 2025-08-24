@@ -11,7 +11,7 @@ import torch
 
 
 def is_url(url, check=True):
-    """Determines if a string is a URL and optionally checks its existence online, returning a boolean."""
+    """Determines if a string is a valid URL and optionally checks its existence online."""
     try:
         url = str(url)
         result = urllib.parse.urlparse(url)
@@ -22,17 +22,13 @@ def is_url(url, check=True):
 
 
 def gsutil_getsize(url=""):
-    """
-    Returns the size in bytes of a file at a Google Cloud Storage URL using `gsutil du`.
-
-    Returns 0 if the command fails or output is empty.
-    """
+    """Returns the size of a file at a 'gs://' URL using gsutil du command; 0 if file not found or command fails."""
     output = subprocess.check_output(["gsutil", "du", url], shell=True, encoding="utf-8")
     return int(output.split()[0]) if output else 0
 
 
 def url_getsize(url="https://ultralytics.com/images/bus.jpg"):
-    """Returns the size in bytes of a downloadable file at a given URL; defaults to -1 if not found."""
+    """Fetches file size in bytes from a URL using an HTTP HEAD request; defaults to -1 if not found."""
     response = requests.head(url, allow_redirects=True)
     return int(response.headers.get("content-length", -1))
 
@@ -58,11 +54,7 @@ def curl_download(url, filename, *, silent: bool = False) -> bool:
 
 
 def safe_download(file, url, url2=None, min_bytes=1e0, error_msg=""):
-    """
-    Downloads a file from a URL (or alternate URL) to a specified path if file is above a minimum size.
-
-    Removes incomplete downloads.
-    """
+    """Downloads a file from 'url' or 'url2' to 'file', ensuring size > 'min_bytes'; removes incomplete downloads."""
     from utils.general import LOGGER
 
     file = Path(file)
@@ -86,13 +78,13 @@ def safe_download(file, url, url2=None, min_bytes=1e0, error_msg=""):
 
 
 def attempt_download(file, repo="ultralytics/yolov5", release="v7.0"):
-    """Downloads a file from GitHub release assets or via direct URL if not found locally, supporting backup
-    versions.
+    """Attempts to download a file from a specified URL or GitHub release, ensuring file integrity with a minimum size
+    check.
     """
     from utils.general import LOGGER
 
     def github_assets(repository, version="latest"):
-        """Fetches GitHub repository release tag and asset names using the GitHub API."""
+        """Returns GitHub tag and assets for a given repository and version from the GitHub API."""
         if version != "latest":
             version = f"tags/{version}"  # i.e. tags/v7.0
         response = requests.get(f"https://api.github.com/repos/{repository}/releases/{version}").json()  # github api

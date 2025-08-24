@@ -1,6 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
-Run YOLOv5 detection inference on images, videos, directories, globs, YouTube, webcam, streams, etc.
+Run YOLOv3 detection inference on images, videos, directories, globs, YouTube, webcam, streams, etc.
 
 Usage - sources:
     $ python detect.py --weights yolov5s.pt --source 0                               # webcam
@@ -20,7 +20,7 @@ Usage - formats:
                                  yolov5s.onnx               # ONNX Runtime or OpenCV DNN with --dnn
                                  yolov5s_openvino_model     # OpenVINO
                                  yolov5s.engine             # TensorRT
-                                 yolov5s.mlpackage          # CoreML (macOS-only)
+                                 yolov5s.mlmodel            # CoreML (macOS-only)
                                  yolov5s_saved_model        # TensorFlow SavedModel
                                  yolov5s.pb                 # TensorFlow GraphDef
                                  yolov5s.tflite             # TensorFlow Lite
@@ -29,7 +29,6 @@ Usage - formats:
 """
 
 import argparse
-import csv
 import os
 import platform
 import sys
@@ -38,7 +37,7 @@ from pathlib import Path
 import torch
 
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[0]  # YOLOv5 root directory
+ROOT = FILE.parents[0]  # YOLOv3 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
@@ -64,6 +63,50 @@ from utils.general import (
     xyxy2xywh,
 )
 from utils.torch_utils import select_device, smart_inference_mode
+from utils.general import check_version
+
+def postprocessing(x):
+    grid = [torch.empty(0) for _ in range(3)]
+    z = []
+    anchor_grid = [torch.empty(0) for _ in range(3)]
+    stride = torch.tensor([ 8., 16., 32.], device='cpu')
+    # anchors = torch.tensor([[10.,13., 16.,30., 33.,23.],[30.,61., 62.,45., 59.,119.],[116.,90., 156.,198., 373.,326.]] , device='cpu')
+    anchors = torch.tensor([[1.25000,  1.62500, 2.00000,  3.75000,4.12500,  2.87500],
+        [1.87500,  3.81250, 3.87500,  2.81250, 3.68750,  7.43750],
+        [ 3.62500,  2.81250, 4.87500,  6.18750, 11.65625, 10.18750]], device='cpu')
+    anchors = torch.tensor(anchors).float().view(3,-1,2)
+    # anchors[0] = anchors[0] / stride[0]
+    # anchors[1] = anchors[1] / stride[1]
+    # anchors[2] = anchors[2] / stride[2]
+
+    for i in range(3):
+        bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
+        # print(x[i].shape)
+        x[i] = x[i].view(bs, 3, 11, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
+
+        if grid[i].shape[2:4] != x[i].shape[2:4]:
+            grid[i], anchor_grid[i] = make_grid(nx,ny,i,anchors,stride)
+
+            
+        xy, wh, conf = x[i].sigmoid().split((2, 2, 6 + 1), 4)
+        xy = (xy * 2 + grid[i]) * stride[i]  # xy
+        wh = (wh * 2) ** 2 * anchor_grid[i]  # wh
+        y = torch.cat((xy, wh, conf), 4)
+        z.append(y.view(bs, 3 * nx * ny, 11))
+
+    return (torch.cat(z, 1), x)
+
+def make_grid(nx=20, ny=20, i=0,anchors = None, stride = None, torch_1_10=check_version(torch.__version__, '1.10.0')):
+    d = anchors[i].device
+    t = anchors[i].dtype
+
+    shape = 1, 3, ny, nx, 2  # grid shape
+    y, x = torch.arange(ny, device=d, dtype=t), torch.arange(nx, device=d, dtype=t)
+    yv, xv = torch.meshgrid(y, x, indexing='ij') if torch_1_10 else torch.meshgrid(y, x)  # torch>=0.7 compatibility
+    grid = torch.stack((xv, yv), 2).expand(shape) - 0.5  # add grid offset, i.e. y = 2.0 * x - 0.5
+    anchor_grid = (anchors[i] * stride[i]).view((1, 3, 1, 1, 2)).expand(shape)
+    return grid, anchor_grid
+
 
 
 @smart_inference_mode()
@@ -78,8 +121,6 @@ def run(
     device="",  # cuda device, i.e. 0 or 0,1,2,3 or cpu
     view_img=False,  # show results
     save_txt=False,  # save results to *.txt
-    save_format=0,  # save boxes coordinates in YOLO format or Pascal-VOC format (0 for YOLO and 1 for Pascal-VOC)
-    save_csv=False,  # save results in CSV format
     save_conf=False,  # save confidences in --save-txt labels
     save_crop=False,  # save cropped prediction boxes
     nosave=False,  # do not save images/videos
@@ -99,53 +140,57 @@ def run(
     vid_stride=1,  # video frame-rate stride
 ):
     """
-    Runs YOLOv5 detection inference on various sources like images, videos, directories, streams, etc.
+    Run YOLOv3 detection inference on various input sources such as images, videos, streams, and YouTube URLs.
 
     Args:
-        weights (str | Path): Path to the model weights file or a Triton URL. Default is 'yolov5s.pt'.
-        source (str | Path): Input source, which can be a file, directory, URL, glob pattern, screen capture, or webcam
-            index. Default is 'data/images'.
-        data (str | Path): Path to the dataset YAML file. Default is 'data/coco128.yaml'.
-        imgsz (tuple[int, int]): Inference image size as a tuple (height, width). Default is (640, 640).
-        conf_thres (float): Confidence threshold for detections. Default is 0.25.
-        iou_thres (float): Intersection Over Union (IOU) threshold for non-max suppression. Default is 0.45.
-        max_det (int): Maximum number of detections per image. Default is 1000.
-        device (str): CUDA device identifier (e.g., '0' or '0,1,2,3') or 'cpu'. Default is an empty string, which uses the
-            best available device.
-        view_img (bool): If True, display inference results using OpenCV. Default is False.
-        save_txt (bool): If True, save results in a text file. Default is False.
-        save_csv (bool): If True, save results in a CSV file. Default is False.
-        save_conf (bool): If True, include confidence scores in the saved results. Default is False.
-        save_crop (bool): If True, save cropped prediction boxes. Default is False.
-        nosave (bool): If True, do not save inference images or videos. Default is False.
-        classes (list[int]): List of class indices to filter detections by. Default is None.
-        agnostic_nms (bool): If True, perform class-agnostic non-max suppression. Default is False.
-        augment (bool): If True, use augmented inference. Default is False.
-        visualize (bool): If True, visualize feature maps. Default is False.
-        update (bool): If True, update all models' weights. Default is False.
-        project (str | Path): Directory to save results. Default is 'runs/detect'.
-        name (str): Name of the current experiment; used to create a subdirectory within 'project'. Default is 'exp'.
-        exist_ok (bool): If True, existing directories with the same name are reused instead of being incremented. Default is
-            False.
-        line_thickness (int): Thickness of bounding box lines in pixels. Default is 3.
-        hide_labels (bool): If True, do not display labels on bounding boxes. Default is False.
-        hide_conf (bool): If True, do not display confidence scores on bounding boxes. Default is False.
-        half (bool): If True, use FP16 half-precision inference. Default is False.
-        dnn (bool): If True, use OpenCV DNN backend for ONNX inference. Default is False.
-        vid_stride (int): Stride for processing video frames, to skip frames between processing. Default is 1.
+        weights (str | Path): Path to the model weights file or a Triton URL (default: 'yolov5s.pt').
+        source (str | Path): Source of input data such as a file, directory, URL, glob pattern, or device identifier
+            (default: 'data/images').
+        data (str | Path): Path to the dataset YAML file (default: 'data/coco128.yaml').
+        imgsz (tuple[int, int]): Inference size as a tuple (height, width) (default: (640, 640)).
+        conf_thres (float): Confidence threshold for detection (default: 0.25).
+        iou_thres (float): Intersection Over Union (IOU) threshold for Non-Max Suppression (NMS) (default: 0.45).
+        max_det (int): Maximum number of detections per image (default: 1000).
+        device (str): CUDA device identifier, e.g., '0', '0,1,2,3', or 'cpu' (default: '').
+        view_img (bool): Whether to display results during inference (default: False).
+        save_txt (bool): Whether to save detection results to text files (default: False).
+        save_conf (bool): Whether to save detection confidences in the text labels (default: False).
+        save_crop (bool): Whether to save cropped detection boxes (default: False).
+        nosave (bool): Whether to prevent saving images or videos with detections (default: False).
+        classes (list[int] | None): List of class indices to filter, e.g., [0, 2, 3] (default: None).
+        agnostic_nms (bool): Whether to perform class-agnostic NMS (default: False).
+        augment (bool): Whether to apply augmented inference (default: False).
+        visualize (bool): Whether to visualize feature maps (default: False).
+        update (bool): Whether to update all models (default: False).
+        project (str | Path): Path to the project directory where results will be saved (default: 'runs/detect').
+        name (str): Name for the specific run within the project directory (default: 'exp').
+        exist_ok (bool): Whether to allow existing project/name directory without incrementing run index (default: False).
+        line_thickness (int): Thickness of bounding box lines in pixels (default: 3).
+        hide_labels (bool): Whether to hide labels in the results (default: False).
+        hide_conf (bool): Whether to hide confidences in the results (default: False).
+        half (bool): Whether to use half-precision (FP16) for inference (default: False).
+        dnn (bool): Whether to use OpenCV DNN for ONNX inference (default: False).
+        vid_stride (int): Stride for video frame rate (default: 1).
 
     Returns:
         None
 
+    Notes:
+        This function supports a variety of input sources such as image files, video files, directories, URL patterns,
+        webcam streams, and YouTube links. It also supports multiple model formats including PyTorch, ONNX, OpenVINO,
+        TensorRT, CoreML, TensorFlow, PaddlePaddle, and others. The results can be visualized in real-time or saved to
+        specified directories. Use command-line arguments to modify the behavior of the function.
+
     Examples:
         ```python
-        from ultralytics import run
+        # Run YOLOv3 inference on an image
+        run(weights='yolov5s.pt', source='data/images/bus.jpg')
 
-        # Run inference on an image
-        run(source='data/images/example.jpg', weights='yolov5s.pt', device='0')
+        # Run YOLOv3 inference on a video
+        run(weights='yolov5s.pt', source='data/videos/video.mp4', view_img=True)
 
-        # Run inference on a video with specific confidence threshold
-        run(source='data/videos/example.mp4', weights='yolov5s.pt', conf_thres=0.4, device='0')
+        # Run YOLOv3 inference on a webcam
+        run(weights='yolov5s.pt', source='0', view_img=True)
         ```
     """
     source = str(source)
@@ -181,7 +226,7 @@ def run(
 
     # Run inference
     model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))  # warmup
-    seen, windows, dt = 0, [], (Profile(device=device), Profile(device=device), Profile(device=device))
+    seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
     for path, im, im0s, vid_cap, s in dataset:
         with dt[0]:
             im = torch.from_numpy(im).to(model.device)
@@ -189,43 +234,19 @@ def run(
             im /= 255  # 0 - 255 to 0.0 - 1.0
             if len(im.shape) == 3:
                 im = im[None]  # expand for batch dim
-            if model.xml and im.shape[0] > 1:
-                ims = torch.chunk(im, im.shape[0], 0)
 
         # Inference
         with dt[1]:
             visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
-            if model.xml and im.shape[0] > 1:
-                pred = None
-                for image in ims:
-                    if pred is None:
-                        pred = model(image, augment=augment, visualize=visualize).unsqueeze(0)
-                    else:
-                        pred = torch.cat((pred, model(image, augment=augment, visualize=visualize).unsqueeze(0)), dim=0)
-                pred = [pred, None]
-            else:
-                pred = model(im, augment=augment, visualize=visualize)
-		pred = postprocessing(pred)
+            pred = model(im, augment=augment, visualize=visualize)
+            pred = postprocessing(pred)
+
         # NMS
         with dt[2]:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
 
         # Second-stage classifier (optional)
         # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
-
-        # Define the path for the CSV file
-        csv_path = save_dir / "predictions.csv"
-
-        # Create or append to the CSV file
-        def write_to_csv(image_name, prediction, confidence):
-            """Writes prediction data for an image to a CSV file, appending if the file exists."""
-            data = {"Image Name": image_name, "Prediction": prediction, "Confidence": confidence}
-            file_exists = os.path.isfile(csv_path)
-            with open(csv_path, mode="a", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=data.keys())
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerow(data)
 
         # Process predictions
         for i, det in enumerate(pred):  # per image
@@ -254,22 +275,9 @@ def run(
 
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
-                    c = int(cls)  # integer class
-                    label = names[c] if hide_conf else f"{names[c]}"
-                    confidence = float(conf)
-                    confidence_str = f"{confidence:.2f}"
-
-                    if save_csv:
-                        write_to_csv(p.name, label, confidence_str)
-
                     if save_txt:  # Write to file
-                        if save_format == 0:
-                            coords = (
-                                (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()
-                            )  # normalized xywh
-                        else:
-                            coords = (torch.tensor(xyxy).view(1, 4) / gn).view(-1).tolist()  # xyxy
-                        line = (cls, *coords, conf) if save_conf else (cls, *coords)  # label format
+                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                        line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
                         with open(f"{txt_path}.txt", "a") as f:
                             f.write(("%g " * len(line)).rstrip() % line + "\n")
 
@@ -321,82 +329,53 @@ def run(
     if update:
         strip_optimizer(weights[0])  # update model (to fix SourceChangeWarning)
 
-def postprocessing(x):
-    grid = [torch.empty(0) for _ in range(3)]
-    z = []
-    anchor_grid = [torch.empty(0) for _ in range(3)]
-    stride = torch.tensor([ 8., 16., 32.], device='cuda:0')
-    # anchors = torch.tensor([[10.,13., 16.,30., 33.,23.],[30.,61., 62.,45., 59.,119.],[116.,90., 156.,198., 373.,326.]] , device='cuda:0')
-    anchors = torch.tensor([[1.25000,  1.62500, 2.00000,  3.75000,4.12500,  2.87500],
-        [1.87500,  3.81250, 3.87500,  2.81250, 3.68750,  7.43750],
-        [ 3.62500,  2.81250, 4.87500,  6.18750, 11.65625, 10.18750]], device='cuda:0')
-    anchors = torch.tensor(anchors).float().view(3,-1,2)
-    # anchors[0] = anchors[0] / stride[0]
-    # anchors[1] = anchors[1] / stride[1]
-    # anchors[2] = anchors[2] / stride[2]
-
-    for i in range(3):
-        bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
-        x[i] = x[i].view(bs, 3, 18, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
-
-        if grid[i].shape[2:4] != x[i].shape[2:4]:
-            grid[i], anchor_grid[i] = make_grid(nx,ny,i,anchors,stride)
-
-            
-        xy, wh, conf = x[i].sigmoid().split((2, 2, 13 + 1), 4)
-        xy = (xy * 2 + grid[i]) * stride[i]  # xy
-        wh = (wh * 2) ** 2 * anchor_grid[i]  # wh
-        y = torch.cat((xy, wh, conf), 4)
-        z.append(y.view(bs, 3 * nx * ny, 18))
-
-    return (torch.cat(z, 1), x)
 
 def parse_opt():
     """
-    Parse command-line arguments for YOLOv5 detection, allowing custom inference options and model configurations.
+    Parses and returns command-line options for running YOLOv3 model detection.
 
     Args:
-        --weights (str | list[str], optional): Model path or Triton URL. Defaults to ROOT / 'yolov5s.pt'.
-        --source (str, optional): File/dir/URL/glob/screen/0(webcam). Defaults to ROOT / 'data/images'.
-        --data (str, optional): Dataset YAML path. Provides dataset configuration information.
-        --imgsz (list[int], optional): Inference size (height, width). Defaults to [640].
-        --conf-thres (float, optional): Confidence threshold. Defaults to 0.25.
-        --iou-thres (float, optional): NMS IoU threshold. Defaults to 0.45.
-        --max-det (int, optional): Maximum number of detections per image. Defaults to 1000.
-        --device (str, optional): CUDA device, i.e., '0' or '0,1,2,3' or 'cpu'. Defaults to "".
-        --view-img (bool, optional): Flag to display results. Defaults to False.
-        --save-txt (bool, optional): Flag to save results to *.txt files. Defaults to False.
-        --save-csv (bool, optional): Flag to save results in CSV format. Defaults to False.
-        --save-conf (bool, optional): Flag to save confidences in labels saved via --save-txt. Defaults to False.
-        --save-crop (bool, optional): Flag to save cropped prediction boxes. Defaults to False.
-        --nosave (bool, optional): Flag to prevent saving images/videos. Defaults to False.
-        --classes (list[int], optional): List of classes to filter results by, e.g., '--classes 0 2 3'. Defaults to None.
-        --agnostic-nms (bool, optional): Flag for class-agnostic NMS. Defaults to False.
-        --augment (bool, optional): Flag for augmented inference. Defaults to False.
-        --visualize (bool, optional): Flag for visualizing features. Defaults to False.
-        --update (bool, optional): Flag to update all models in the model directory. Defaults to False.
-        --project (str, optional): Directory to save results. Defaults to ROOT / 'runs/detect'.
-        --name (str, optional): Sub-directory name for saving results within --project. Defaults to 'exp'.
-        --exist-ok (bool, optional): Flag to allow overwriting if the project/name already exists. Defaults to False.
-        --line-thickness (int, optional): Thickness (in pixels) of bounding boxes. Defaults to 3.
-        --hide-labels (bool, optional): Flag to hide labels in the output. Defaults to False.
-        --hide-conf (bool, optional): Flag to hide confidences in the output. Defaults to False.
-        --half (bool, optional): Flag to use FP16 half-precision inference. Defaults to False.
-        --dnn (bool, optional): Flag to use OpenCV DNN for ONNX inference. Defaults to False.
-        --vid-stride (int, optional): Video frame-rate stride, determining the number of frames to skip in between
-            consecutive frames. Defaults to 1.
+        --weights (list[str]): Model path or Triton URL. Default: ROOT / "yolov3-tiny.pt".
+        --source (str): Input data source like file/dir/URL/glob/screen/0(webcam). Default: ROOT / "data/images".
+        --data (str): Optional path to dataset.yaml. Default: ROOT / "data/coco128.yaml".
+        --imgsz (list[int]): Inference size as height, width. Accepts multiple values. Default: [640].
+        --conf-thres (float): Confidence threshold for predictions. Default: 0.25.
+        --iou-thres (float): IoU threshold for Non-Maximum Suppression (NMS). Default: 0.45.
+        --max-det (int): Maximum number of detections per image. Default: 1000.
+        --device (str): CUDA device identifier, e.g. "0" or "0,1,2,3" or "cpu". Default: "" (auto-select).
+        --view-img (bool): Display results. Default: False.
+        --save-txt (bool): Save results to *.txt files. Default: False.
+        --save-conf (bool): Save confidence scores in text labels. Default: False.
+        --save-crop (bool): Save cropped prediction boxes. Default: False.
+        --nosave (bool): Do not save images/videos. Default: False.
+        --classes (list[int] | None): Filter results by class, e.g. [0, 2, 3]. Default: None.
+        --agnostic-nms (bool): Perform class-agnostic NMS. Default: False.
+        --augment (bool): Apply augmented inference. Default: False.
+        --visualize (bool): Visualize feature maps. Default: False.
+        --update (bool): Update all models. Default: False.
+        --project (str): Directory to save results; results saved to "project/name". Default: ROOT / "runs/detect".
+        --name (str): Name of the specific run; results saved to "project/name". Default: "exp".
+        --exist-ok (bool): Allow results to be saved in an existing directory without incrementing. Default: False.
+        --line-thickness (int): Bounding box line thickness in pixels. Default: 3.
+        --hide-labels (bool): Hide labels on detections. Default: False.
+        --hide-conf (bool): Hide confidence scores on labels. Default: False.
+        --half (bool): Use FP16 half-precision inference. Default: False.
+        --dnn (bool): Use OpenCV DNN backend for ONNX inference. Default: False.
+        --vid-stride (int): Frame-rate stride for video input. Default: 1.
 
     Returns:
-        argparse.Namespace: Parsed command-line arguments as an argparse.Namespace object.
+        argparse.Namespace: Parsed command-line arguments for YOLOv3 inference configurations.
 
     Example:
         ```python
-        from ultralytics import YOLOv5
-        args = YOLOv5.parse_opt()
+        options = parse_opt()
+        run(**vars(options))
         ```
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "yolov5s.pt", help="model path or triton URL")
+    parser.add_argument(
+        "--weights", nargs="+", type=str, default=ROOT / "yolov3-tiny.pt", help="model path or triton URL"
+    )
     parser.add_argument("--source", type=str, default=ROOT / "data/images", help="file/dir/URL/glob/screen/0(webcam)")
     parser.add_argument("--data", type=str, default=ROOT / "data/coco128.yaml", help="(optional) dataset.yaml path")
     parser.add_argument("--imgsz", "--img", "--img-size", nargs="+", type=int, default=[640], help="inference size h,w")
@@ -406,13 +385,6 @@ def parse_opt():
     parser.add_argument("--device", default="", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
     parser.add_argument("--view-img", action="store_true", help="show results")
     parser.add_argument("--save-txt", action="store_true", help="save results to *.txt")
-    parser.add_argument(
-        "--save-format",
-        type=int,
-        default=0,
-        help="whether to save boxes coordinates in YOLO format or Pascal-VOC format when save-txt is True, 0 for YOLO and 1 for Pascal-VOC",
-    )
-    parser.add_argument("--save-csv", action="store_true", help="save results in CSV format")
     parser.add_argument("--save-conf", action="store_true", help="save confidences in --save-txt labels")
     parser.add_argument("--save-crop", action="store_true", help="save cropped prediction boxes")
     parser.add_argument("--nosave", action="store_true", help="do not save images/videos")
@@ -438,26 +410,52 @@ def parse_opt():
 
 def main(opt):
     """
-    Executes YOLOv5 model inference based on provided command-line arguments, validating dependencies before running.
+    Entry point for running the YOLO model; checks requirements and calls `run` with parsed options.
 
     Args:
-        opt (argparse.Namespace): Command-line arguments for YOLOv5 detection. See function `parse_opt` for details.
+        opt (argparse.Namespace): Parsed command-line options, which include:
+            - weights (str | list of str): Path to the model weights or Triton server URL.
+            - source (str): Input source, can be a file, directory, URL, glob, screen, or webcam index.
+            - data (str): Path to the dataset configuration file (.yaml).
+            - imgsz (tuple of int): Inference image size as (height, width).
+            - conf_thres (float): Confidence threshold for detections.
+            - iou_thres (float): Intersection over Union (IoU) threshold for Non-Maximum Suppression (NMS).
+            - max_det (int): Maximum number of detections per image.
+            - device (str): Device to run inference on; options are CUDA device id(s) or 'cpu'
+            - view_img (bool): Flag to display inference results.
+            - save_txt (bool): Save detection results in .txt format.
+            - save_conf (bool): Save detection confidences in .txt labels.
+            - save_crop (bool): Save cropped bounding box predictions.
+            - nosave (bool): Do not save images/videos with detections.
+            - classes (list of int): Filter results by class, e.g., --class 0 2 3.
+            - agnostic_nms (bool): Use class-agnostic NMS.
+            - augment (bool): Enable augmented inference.
+            - visualize (bool): Visualize feature maps.
+            - update (bool): Update the model during inference.
+            - project (str): Directory to save results.
+            - name (str): Name for the results directory.
+            - exist_ok (bool): Allow existing project/name directories without incrementing.
+            - line_thickness (int): Thickness of bounding box lines.
+            - hide_labels (bool): Hide class labels on bounding boxes.
+            - hide_conf (bool): Hide confidence scores on bounding boxes.
+            - half (bool): Use FP16 half-precision inference.
+            - dnn (bool): Use OpenCV DNN backend for ONNX inference.
+            - vid_stride (int): Video frame-rate stride.
 
     Returns:
         None
 
-    Note:
-        This function performs essential pre-execution checks and initiates the YOLOv5 detection process based on user-specified
-        options. Refer to the usage guide and examples for more information about different sources and formats at:
-        https://github.com/ultralytics/ultralytics
+    Example:
+        ```python
+        if __name__ == "__main__":
+            opt = parse_opt()
+            main(opt)
+        ```
 
-    Example usage:
-
-    ```python
-    if __name__ == "__main__":
-        opt = parse_opt()
-        main(opt)
-    ```
+    Notes:
+        Run this function as the entry point for using YOLO for object detection on a variety of input sources such as
+        images, videos, directories, webcams, streams, etc. This function ensures all requirements are checked and
+        subsequently initiates the detection process by calling the `run` function with appropriate options.
     """
     check_requirements(ROOT / "requirements.txt", exclude=("tensorboard", "thop"))
     run(**vars(opt))

@@ -1,6 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
-Train a YOLOv5 classifier model on a classification dataset.
+Train a YOLOv3 classifier model on a classification dataset.
 
 Usage - Single-GPU training:
     $ python classify/train.py --model yolov5s-cls.pt --data imagenette160 --epochs 5 --img 224
@@ -9,7 +9,7 @@ Usage - Multi-GPU DDP training:
     $ python -m torch.distributed.run --nproc_per_node 4 --master_port 2022 classify/train.py --model yolov5s-cls.pt --data imagenet --epochs 5 --img 224 --device 0,1,2,3
 
 Datasets:           --data mnist, fashion-mnist, cifar10, cifar100, imagenette, imagewoof, imagenet, or 'path/to/data'
-YOLOv5-cls models:  --model yolov5n-cls.pt, yolov5s-cls.pt, yolov5m-cls.pt, yolov5l-cls.pt, yolov5x-cls.pt
+YOLOv3-cls models:  --model yolov5n-cls.pt, yolov5s-cls.pt, yolov5m-cls.pt, yolov5l-cls.pt, yolov5x-cls.pt
 Torchvision models: --model resnet50, efficientnet_b0, etc. See https://pytorch.org/vision/stable/models.html
 """
 
@@ -31,7 +31,7 @@ from torch.cuda import amp
 from tqdm import tqdm
 
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[1]  # YOLOv5 root directory
+ROOT = FILE.parents[1]  # YOLOv3 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
@@ -76,7 +76,9 @@ GIT_INFO = check_git_info()
 
 
 def train(opt, device):
-    """Trains a YOLOv5 model, managing datasets, model optimization, logging, and saving checkpoints."""
+    """Trains a model on a given dataset using specified options and device, handling data loading, model optimization,
+    and logging.
+    """
     init_seeds(opt.seed + 1 + RANK, deterministic=True)
     save_dir, data, bs, epochs, nw, imgsz, pretrained = (
         opt.save_dir,
@@ -148,7 +150,7 @@ def train(opt, device):
             m = hub.list("ultralytics/yolov5")  # + hub.list('pytorch/vision')  # models
             raise ModuleNotFoundError(f"--model {opt.model} not found. Available models are: \n" + "\n".join(m))
         if isinstance(model, DetectionModel):
-            LOGGER.warning("WARNING ⚠️ pass YOLOv5 classifier model with '-cls' suffix, i.e. '--model yolov5s-cls.pt'")
+            LOGGER.warning("WARNING ⚠️ pass YOLOv3 classifier model with '-cls' suffix, i.e. '--model yolov5s-cls.pt'")
             model = ClassificationModel(model=model, nc=nc, cutoff=opt.cutoff or 10)  # convert to classification model
         reshape_classifier_output(model, nc)  # update class count
     for m in model.modules():
@@ -311,9 +313,7 @@ def train(opt, device):
 
 
 def parse_opt(known=False):
-    """Parses command line arguments for YOLOv5 training including model path, dataset, epochs, and more, returning
-    parsed arguments.
-    """
+    """Parses command line arguments for model configuration and training options."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="yolov5s-cls.pt", help="initial weights path")
     parser.add_argument("--data", type=str, default="imagenette160", help="cifar10, cifar100, mnist, imagenet, ...")
@@ -341,7 +341,7 @@ def parse_opt(known=False):
 
 
 def main(opt):
-    """Executes YOLOv5 training with given options, handling device setup and DDP mode; includes pre-training checks."""
+    """Initializes training environment, checks, DDP mode setup, and starts training with given options."""
     if RANK in {-1, 0}:
         print_args(vars(opt))
         check_git_status()
@@ -365,11 +365,7 @@ def main(opt):
 
 
 def run(**kwargs):
-    """
-    Executes YOLOv5 model training or inference with specified parameters, returning updated options.
-
-    Example: from yolov5 import classify; classify.train.run(data=mnist, imgsz=320, model='yolov5m')
-    """
+    """Executes YOLOv5 model training with dynamic options, e.g., `run(data='mnist', imgsz=320, model='yolov5m')`."""
     opt = parse_opt(True)
     for k, v in kwargs.items():
         setattr(opt, k, v)

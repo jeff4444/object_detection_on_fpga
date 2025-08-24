@@ -1,36 +1,52 @@
 <a href="https://www.ultralytics.com/"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/logo/Ultralytics_Logotype_Original.svg" width="320" alt="Ultralytics logo"></a>
 
-# Flask REST API for YOLOv5
+# Flask REST API Example for YOLO Models
 
-[Representational State Transfer (REST)](https://en.wikipedia.org/wiki/Representational_state_transfer) [Application Programming Interfaces (APIs)](https://en.wikipedia.org/wiki/API) provide a standardized way to expose [Machine Learning (ML)](https://www.ultralytics.com/glossary/machine-learning-ml) models for use by other services or applications. This directory contains an example REST API built with the [Flask](https://flask.palletsprojects.com/en/stable/) web framework to serve the [Ultralytics YOLOv5s](https://docs.ultralytics.com/models/yolov5/) model, loaded directly from [PyTorch Hub](https://pytorch.org/hub/ultralytics_yolov5/). This setup allows you to easily integrate YOLOv5 [object detection](https://docs.ultralytics.com/tasks/detect/) capabilities into your web applications or microservices, aligning with common [model deployment options](https://docs.ultralytics.com/guides/model-deployment-options/).
+[Representational State Transfer (REST)](https://en.wikipedia.org/wiki/Representational_state_transfer) [Application Programming Interfaces (APIs)](https://developer.mozilla.org/en-US/docs/Web/API) are a standard way to expose [Machine Learning (ML)](https://www.ultralytics.com/glossary/machine-learning-ml) models, allowing other services or applications to interact with them over a network. This directory provides an example REST API built using the [Flask](https://palletsprojects.com/projects/flask/) microframework to serve predictions from an [Ultralytics YOLOv3](https://docs.ultralytics.com/models/yolov3/) model, potentially loaded via [PyTorch Hub](https://pytorch.org/hub/) or other standard PyTorch methods.
 
-## 💻 Requirements
+Deploying models via APIs is a crucial step in [MLOps](https://www.ultralytics.com/glossary/machine-learning-operations-mlops) and enables integration into larger systems. You can explore various [model deployment options](https://docs.ultralytics.com/guides/model-deployment-options/) for different scenarios.
 
-The primary requirement is the [Flask](https://flask.palletsprojects.com/en/stable/) web framework. You can install it using pip:
+## 🔧 Requirements
+
+Ensure you have the necessary Python packages installed. The primary requirement is Flask.
+
+Install Flask using pip:
 
 ```shell
-pip install Flask
+pip install Flask torch torchvision
 ```
 
-You will also need `torch` and `yolov5`. These are implicitly handled by the script when it loads the model from PyTorch Hub. Ensure you have a functioning Python environment set up.
+_Note: `torch` and `torchvision` are required for loading and running PyTorch-based models like YOLOv3._
 
 ## ▶️ Run the API
 
-Once Flask is installed, you can start the API server using the following command:
+Once Flask and dependencies are installed, you can start the API server.
+
+Execute the Python script:
 
 ```shell
 python restapi.py --port 5000
 ```
 
-The server will begin listening on the specified port (defaulting to 5000). You can then send inference requests to the API endpoint using tools like [curl](https://curl.se/) or any other HTTP client.
+The API server will start listening on the specified port (default is 5000).
 
-To test the API with a local image file (e.g., `zidane.jpg` located in the `yolov5/data/images` directory relative to the script):
+## 🚀 Make a Prediction Request
+
+You can send prediction requests to the running API using tools like [`curl`](https://curl.se/) or scripting languages.
+
+Send a POST request with an image file (`zidane.jpg` in this example) to the `/v1/object-detection/yolov3` endpoint:
 
 ```shell
-curl -X POST -F image=@../data/images/zidane.jpg 'http://localhost:5000/v1/object-detection/yolov5s'
+curl -X POST -F image=@zidane.jpg 'http://localhost:5000/v1/object-detection/yolov3'
 ```
 
-The API processes the submitted image using the YOLOv5s model and returns the detection results in [JSON](https://www.json.org/json-en.html) format. Each object within the JSON array represents a detected item, including its class ID, confidence score, normalized [bounding box](https://www.ultralytics.com/glossary/bounding-box) coordinates (`xcenter`, `ycenter`, `width`, `height`), and class name.
+_Ensure `zidane.jpg` (or your test image) is present in the directory where you run the `curl` command._
+
+## 📄 Understand the Response
+
+The API processes the image and returns the [object detection](https://www.ultralytics.com/glossary/object-detection) results in [JSON](https://www.ultralytics.com/glossary/json) format. Each object detected includes its class ID, confidence score, bounding box coordinates (normalized), and class name.
+
+Example JSON response:
 
 ```json
 [
@@ -73,8 +89,8 @@ The API processes the submitted image using the YOLOv5s model and returns the de
 ]
 ```
 
-An example Python script, `example_request.py`, is included to demonstrate how to perform inference using the popular [requests](https://requests.readthedocs.io/en/latest/) library. This script offers a straightforward method for interacting with the running API programmatically.
+An example Python script (`example_request.py`) demonstrating how to send requests using the popular [requests](https://requests.readthedocs.io/en/latest/) library is also included in this directory.
 
-## 🤝 Contribute
+## 🤝 Contributing
 
-Contributions to enhance this Flask API example are highly encouraged! Whether you're interested in adding support for different YOLO models, improving error handling, or implementing new features, please feel free to fork the repository, apply your changes, and submit a pull request. For more comprehensive contribution guidelines, please refer to the main [Ultralytics YOLOv5 repository](https://github.com/ultralytics/yolov5) and the general [Ultralytics documentation](https://docs.ultralytics.com/).
+Contributions to enhance this example or add support for other Ultralytics models are welcome! Please see the main Ultralytics [CONTRIBUTING](https://docs.ultralytics.com/help/contributing/) guide for more information on how to get involved.

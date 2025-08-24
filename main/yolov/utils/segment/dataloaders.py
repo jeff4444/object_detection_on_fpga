@@ -7,10 +7,10 @@ import random
 import cv2
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, distributed
 
 from ..augmentations import augment_hsv, copy_paste, letterbox
-from ..dataloaders import InfiniteDataLoader, LoadImagesAndLabels, SmartDistributedSampler, seed_worker
+from ..dataloaders import InfiniteDataLoader, LoadImagesAndLabels, seed_worker
 from ..general import LOGGER, xyn2xy, xywhn2xyxy, xyxy2xywhn
 from ..torch_utils import torch_distributed_zero_first
 from .augmentations import mixup, random_perspective
@@ -39,7 +39,7 @@ def create_dataloader(
     overlap_mask=False,
     seed=0,
 ):
-    """Creates a dataloader for training, validating, or testing YOLO models with various dataset options."""
+    """Creates a DataLoader for images and labels with optional augmentations and distributed sampling."""
     if rect and shuffle:
         LOGGER.warning("WARNING ⚠️ --rect is incompatible with DataLoader shuffle, setting shuffle=False")
         shuffle = False
@@ -59,13 +59,12 @@ def create_dataloader(
             prefix=prefix,
             downsample_ratio=mask_downsample_ratio,
             overlap=overlap_mask,
-            rank=rank,
         )
 
     batch_size = min(batch_size, len(dataset))
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
-    sampler = None if rank == -1 else SmartDistributedSampler(dataset, shuffle=shuffle)
+    sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
     loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
     generator = torch.Generator()
     generator.manual_seed(6148914691236517205 + seed + RANK)
@@ -75,7 +74,6 @@ def create_dataloader(
         shuffle=shuffle and sampler is None,
         num_workers=nw,
         sampler=sampler,
-        drop_last=quad,
         pin_memory=True,
         collate_fn=LoadImagesAndLabelsAndMasks.collate_fn4 if quad else LoadImagesAndLabelsAndMasks.collate_fn,
         worker_init_fn=seed_worker,
@@ -84,7 +82,7 @@ def create_dataloader(
 
 
 class LoadImagesAndLabelsAndMasks(LoadImagesAndLabels):  # for training/testing
-    """Loads images, labels, and segmentation masks for training and testing YOLO models with augmentation support."""
+    """Loads images, labels, and masks for training/testing with optional augmentations including mosaic and mixup."""
 
     def __init__(
         self,
@@ -103,10 +101,8 @@ class LoadImagesAndLabelsAndMasks(LoadImagesAndLabels):  # for training/testing
         prefix="",
         downsample_ratio=1,
         overlap=False,
-        rank=-1,
-        seed=0,
     ):
-        """Initializes the dataset with image, label, and mask loading capabilities for training/testing."""
+        """Initializes image, label, and mask loading for training/testing with optional augmentations."""
         super().__init__(
             path,
             img_size,
@@ -121,14 +117,12 @@ class LoadImagesAndLabelsAndMasks(LoadImagesAndLabels):  # for training/testing
             pad,
             min_items,
             prefix,
-            rank,
-            seed,
         )
         self.downsample_ratio = downsample_ratio
         self.overlap = overlap
 
     def __getitem__(self, index):
-        """Returns a transformed item from the dataset at the specified index, handling indexing and image weighting."""
+        """Fetches the dataset item at a given index, handling linear, shuffled, or image-weighted indexing."""
         index = self.indices[index]  # linear, shuffled, or image_weights
 
         hyp = self.hyp
@@ -235,7 +229,9 @@ class LoadImagesAndLabelsAndMasks(LoadImagesAndLabels):  # for training/testing
         return (torch.from_numpy(img), labels_out, self.im_files[index], shapes, masks)
 
     def load_mosaic(self, index):
-        """Loads 1 image + 3 random images into a 4-image YOLOv5 mosaic, adjusting labels and segments accordingly."""
+        """Loads 4-image mosaic for YOLOv3 training, combining 1 target image with 3 random images within specified
+        border constraints.
+        """
         labels4, segments4 = [], []
         s = self.img_size
         yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border)  # mosaic center x, y
@@ -296,7 +292,7 @@ class LoadImagesAndLabelsAndMasks(LoadImagesAndLabels):  # for training/testing
 
     @staticmethod
     def collate_fn(batch):
-        """Custom collation function for DataLoader, batches images, labels, paths, shapes, and segmentation masks."""
+        """Batches images, labels, paths, shapes, and masks; modifies label indices for target image association."""
         img, label, path, shapes, masks = zip(*batch)  # transposed
         batched_masks = torch.cat(masks, 0)
         for i, l in enumerate(label):

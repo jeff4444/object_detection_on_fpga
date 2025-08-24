@@ -29,14 +29,10 @@ matplotlib.use("Agg")  # for writing to files only
 
 
 class Colors:
-    """Provides an RGB color palette derived from Ultralytics color scheme for visualization tasks."""
+    """Provides a color palette and methods to convert indices to RGB or BGR color tuples."""
 
     def __init__(self):
-        """
-        Initializes the Colors class with a palette derived from Ultralytics color scheme, converting hex codes to RGB.
-
-        Colors derived from `hex = matplotlib.colors.TABLEAU_COLORS.values()`.
-        """
+        """Initializes the Colors class with a palette from the Ultralytics color palette."""
         hexs = (
             "FF3838",
             "FF9D97",
@@ -63,13 +59,13 @@ class Colors:
         self.n = len(self.palette)
 
     def __call__(self, i, bgr=False):
-        """Returns color from palette by index `i`, in BGR format if `bgr=True`, else RGB; `i` is an integer index."""
+        """Converts index `i` to a color from predefined palette, returning in BGR format if `bgr` is True, else RGB."""
         c = self.palette[int(i) % self.n]
         return (c[2], c[1], c[0]) if bgr else c
 
     @staticmethod
-    def hex2rgb(h):
-        """Converts hexadecimal color `h` to an RGB tuple (PIL-compatible) with order (R, G, B)."""
+    def hex2rgb(h):  # rgb order (PIL)
+        """Converts hexadecimal color `h` to RGB tuple; `h` format should be '#RRGGBB'."""
         return tuple(int(h[1 + i : 1 + i + 2], 16) for i in (0, 2, 4))
 
 
@@ -84,9 +80,7 @@ def feature_visualization(x, module_type, stage, n=32, save_dir=Path("runs/detec
     n:              Maximum number of feature maps to plot
     save_dir:       Directory to save results.
     """
-    if ("Detect" not in module_type) and (
-        "Segment" not in module_type
-    ):  # 'Detect' for Object Detect task,'Segment' for Segment task
+    if "Detect" not in module_type:
         batch, channels, height, width = x.shape  # batch, channels, height, width
         if height > 1 and width > 1:
             f = save_dir / f"stage{stage}_{module_type.split('.')[-1]}_features.png"  # filename
@@ -107,11 +101,7 @@ def feature_visualization(x, module_type, stage, n=32, save_dir=Path("runs/detec
 
 
 def hist2d(x, y, n=100):
-    """
-    Generates a logarithmic 2D histogram, useful for visualizing label or evolution distributions.
-
-    Used in used in labels.png and evolve.png.
-    """
+    """Generates a 2D log-scaled histogram from input arrays `x` and `y`, with `n` bins for each axis."""
     xedges, yedges = np.linspace(x.min(), x.max(), n), np.linspace(y.min(), y.max(), n)
     hist, xedges, yedges = np.histogram2d(x, y, (xedges, yedges))
     xidx = np.clip(np.digitize(x, xedges) - 1, 0, hist.shape[0] - 1)
@@ -120,14 +110,16 @@ def hist2d(x, y, n=100):
 
 
 def butter_lowpass_filtfilt(data, cutoff=1500, fs=50000, order=5):
-    """Applies a low-pass Butterworth filter to `data` with specified `cutoff`, `fs`, and `order`."""
+    """
+    Applies a low-pass Butterworth filter using forward-backward method.
+
+    See: https://stackoverflow.com/questions/28536191/how-to-filter-smooth-with-scipy-numpy
+    """
     from scipy.signal import butter, filtfilt
 
     # https://stackoverflow.com/questions/28536191/how-to-filter-smooth-with-scipy-numpy
     def butter_lowpass(cutoff, fs, order):
-        """Applies a low-pass Butterworth filter to a signal with specified cutoff frequency, sample rate, and filter
-        order.
-        """
+        """Applies a low-pass Butterworth filter to input data using forward-backward method; see https://stackoverflow.com/questions/28536191/how-to-filter-smooth-with-scipy-numpy."""
         nyq = 0.5 * fs
         normal_cutoff = cutoff / nyq
         return butter(order, normal_cutoff, btype="low", analog=False)
@@ -137,8 +129,8 @@ def butter_lowpass_filtfilt(data, cutoff=1500, fs=50000, order=5):
 
 
 def output_to_target(output, max_det=300):
-    """Converts YOLOv5 model output to [batch_id, class_id, x, y, w, h, conf] format for plotting, limiting detections
-    to `max_det`.
+    """Converts model output to [batch_id, class_id, x, y, w, h, conf] format for plotting, handling up to `max_det`
+    detections.
     """
     targets = []
     for i, o in enumerate(output):
@@ -150,7 +142,7 @@ def output_to_target(output, max_det=300):
 
 @threaded
 def plot_images(images, targets, paths=None, fname="images.jpg", names=None):
-    """Plots an image grid with labels from YOLOv5 predictions or targets, saving to `fname`."""
+    """Plots a grid of images with labels, optionally resizing and annotating with target boxes and names."""
     if isinstance(images, torch.Tensor):
         images = images.cpu().float().numpy()
     if isinstance(targets, torch.Tensor):
@@ -183,7 +175,7 @@ def plot_images(images, targets, paths=None, fname="images.jpg", names=None):
     # Annotate
     fs = int((h + w) * ns * 0.01)  # font size
     annotator = Annotator(mosaic, line_width=round(fs / 10), font_size=fs, pil=True, example=names)
-    for i in range(bs):
+    for i in range(i + 1):
         x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
         annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
         if paths:
@@ -214,7 +206,7 @@ def plot_images(images, targets, paths=None, fname="images.jpg", names=None):
 
 
 def plot_lr_scheduler(optimizer, scheduler, epochs=300, save_dir=""):
-    """Plots learning rate schedule for given optimizer and scheduler, saving plot to `save_dir`."""
+    """Simulates and plots LR schedule over epochs, saving figure to `save_dir`."""
     optimizer, scheduler = copy(optimizer), copy(scheduler)  # do not modify originals
     y = []
     for _ in range(epochs):
@@ -230,13 +222,8 @@ def plot_lr_scheduler(optimizer, scheduler, epochs=300, save_dir=""):
     plt.close()
 
 
-def plot_val_txt():
-    """
-    Plots 2D and 1D histograms of bounding box centers from 'val.txt' using matplotlib, saving as 'hist2d.png' and
-    'hist1d.png'.
-
-    Example: from utils.plots import *; plot_val()
-    """
+def plot_val_txt():  # from utils.plots import *; plot_val()
+    """Plots 2D and 1D histograms of object center locations from 'val.txt', saving as 'hist2d.png' and 'hist1d.png'."""
     x = np.loadtxt("val.txt", dtype=np.float32)
     box = xyxy2xywh(x[:, :4])
     cx, cy = box[:, 0], box[:, 1]
@@ -252,12 +239,8 @@ def plot_val_txt():
     plt.savefig("hist1d.png", dpi=200)
 
 
-def plot_targets_txt():
-    """
-    Plots histograms of object detection targets from 'targets.txt', saving the figure as 'targets.jpg'.
-
-    Example: from utils.plots import *; plot_targets_txt()
-    """
+def plot_targets_txt():  # from utils.plots import *; plot_targets_txt()
+    """Plots histograms for target attributes from 'targets.txt' and saves as 'targets.jpg'."""
     x = np.loadtxt("targets.txt", dtype=np.float32).T
     s = ["x targets", "y targets", "width targets", "height targets"]
     fig, ax = plt.subplots(2, 2, figsize=(8, 8), tight_layout=True)
@@ -269,13 +252,8 @@ def plot_targets_txt():
     plt.savefig("targets.jpg", dpi=200)
 
 
-def plot_val_study(file="", dir="", x=None):
-    """
-    Plots validation study results from 'study*.txt' files in a directory or a specific file, comparing model
-    performance and speed.
-
-    Example: from utils.plots import *; plot_val_study()
-    """
+def plot_val_study(file="", dir="", x=None):  # from utils.plots import *; plot_val_study()
+    """Plots validation study results from 'study*.txt' files, comparing model performance and speed."""
     save_dir = Path(file).parent if file else Path(dir)
     plot2 = False  # plot additional results
     if plot2:
@@ -326,7 +304,7 @@ def plot_val_study(file="", dir="", x=None):
 
 @TryExcept()  # known issue https://github.com/ultralytics/yolov5/issues/5395
 def plot_labels(labels, names=(), save_dir=Path("")):
-    """Plots dataset labels, saving correlogram and label images, handles classes, and visualizes bounding boxes."""
+    """Plots dataset labels correlogram, class distribution, and label geometry; saves to `save_dir`."""
     LOGGER.info(f"Plotting labels to {save_dir / 'labels.jpg'}... ")
     c, b = labels[:, 0], labels[:, 1:].transpose()  # classes, boxes
     nc = int(c.max() + 1)  # number of classes
@@ -371,7 +349,7 @@ def plot_labels(labels, names=(), save_dir=Path("")):
 
 
 def imshow_cls(im, labels=None, pred=None, names=None, nmax=25, verbose=False, f=Path("images.jpg")):
-    """Displays a grid of images with optional labels and predictions, saving to a file."""
+    """Displays a grid of classification images with optional labels and predictions, saving to file."""
     from utils.augmentations import denormalize
 
     names = names or [f"class{i}" for i in range(1000)]
@@ -400,12 +378,8 @@ def imshow_cls(im, labels=None, pred=None, names=None, nmax=25, verbose=False, f
     return f
 
 
-def plot_evolve(evolve_csv="path/to/evolve.csv"):
-    """
-    Plots hyperparameter evolution results from a given CSV, saving the plot and displaying best results.
-
-    Example: from utils.plots import *; plot_evolve()
-    """
+def plot_evolve(evolve_csv="path/to/evolve.csv"):  # from utils.plots import *; plot_evolve()
+    """Plots evolution of hyperparameters from a CSV file, highlighting best results."""
     evolve_csv = Path(evolve_csv)
     data = pd.read_csv(evolve_csv)
     keys = [x.strip() for x in data.columns]
@@ -432,11 +406,7 @@ def plot_evolve(evolve_csv="path/to/evolve.csv"):
 
 
 def plot_results(file="path/to/results.csv", dir=""):
-    """
-    Plots training results from a 'results.csv' file; accepts file path and directory as arguments.
-
-    Example: from utils.plots import *; plot_results('path/to/results.csv')
-    """
+    """Plots training results from 'results.csv'; usage: `plot_results('path/to/results.csv')`."""
     save_dir = Path(file).parent if file else Path(dir)
     fig, ax = plt.subplots(2, 5, figsize=(12, 6), tight_layout=True)
     ax = ax.ravel()
@@ -463,10 +433,8 @@ def plot_results(file="path/to/results.csv", dir=""):
 
 
 def profile_idetection(start=0, stop=0, labels=(), save_dir=""):
-    """
-    Plots per-image iDetection logs, comparing metrics like storage and performance over time.
-
-    Example: from utils.plots import *; profile_idetection()
+    """Plots iDetection per-image logs from '*.txt', including metrics like storage and FPS; pass start, stop times,
+    labels, and save_dir.
     """
     ax = plt.subplots(2, 4, figsize=(12, 6), tight_layout=True)[1].ravel()
     s = ["Images", "Free Storage (GB)", "RAM Usage (GB)", "Battery", "dt_raw (ms)", "dt_smooth (ms)", "real-world FPS"]
@@ -498,8 +466,8 @@ def profile_idetection(start=0, stop=0, labels=(), save_dir=""):
 
 
 def save_one_box(xyxy, im, file=Path("im.jpg"), gain=1.02, pad=10, square=False, BGR=False, save=True):
-    """Crops and saves an image from bounding box `xyxy`, applied with `gain` and `pad`, optionally squares and adjusts
-    for BGR.
+    """Saves/enhances a crop from `im` defined by `xyxy` to `file` or returns it; customizable with `gain`, `pad`,
+    `square`, `BGR`.
     """
     xyxy = torch.tensor(xyxy).view(-1, 4)
     b = xyxy2xywh(xyxy)  # boxes

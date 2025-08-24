@@ -19,7 +19,7 @@ COMET_DEFAULT_CHECKPOINT_FILENAME = os.getenv("COMET_DEFAULT_CHECKPOINT_FILENAME
 
 
 def download_model_checkpoint(opt, experiment):
-    """Downloads YOLOv5 model checkpoint from Comet ML experiment, updating `opt.weights` with download path."""
+    """Downloads the model checkpoint from Comet ML; updates `opt.weights` with the downloaded file path."""
     model_dir = f"{opt.project}/{experiment.name}"
     os.makedirs(model_dir, exist_ok=True)
 
@@ -103,7 +103,7 @@ def check_comet_weights(opt):
 
     Args:
         opt (argparse.Namespace): Command Line arguments passed
-            to YOLOv5 training script
+            to YOLOv3 training script
 
     Returns:
         None/bool: Return True if weights are successfully downloaded
@@ -129,7 +129,7 @@ def check_comet_resume(opt):
 
     Args:
         opt (argparse.Namespace): Command Line arguments passed
-            to YOLOv5 training script
+            to YOLOv3 training script
 
     Returns:
         None/bool: Return True if the run is restored successfully

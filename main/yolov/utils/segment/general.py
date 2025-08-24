@@ -143,8 +143,8 @@ def masks_iou(mask1, mask2, eps=1e-7):
 
 
 def masks2segments(masks, strategy="largest"):
-    """Converts binary (n,160,160) masks to polygon segments with options for concatenation or selecting the largest
-    segment.
+    """Converts binary masks to polygon segments with 'largest' or 'concat' strategies, returning lists of (n,xy)
+    coordinates.
     """
     segments = []
     for x in masks.int().cpu().numpy().astype("uint8"):

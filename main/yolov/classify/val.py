@@ -1,6 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
-Validate a trained YOLOv5 classification model on a classification dataset.
+Validate a trained YOLOv3 classification model on a classification dataset.
 
 Usage:
     $ bash data/scripts/get_imagenet.sh --val  # download ImageNet val split (6.3G, 50000 images)
@@ -29,7 +29,7 @@ import torch
 from tqdm import tqdm
 
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[1]  # YOLOv5 root directory
+ROOT = FILE.parents[1]  # YOLOv3 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
@@ -68,7 +68,7 @@ def run(
     criterion=None,
     pbar=None,
 ):
-    """Validates a YOLOv5 classification model on a dataset, computing metrics like top1 and top5 accuracy."""
+    """Evaluate a YOLOv3 classification model on the specified dataset, providing accuracy metrics."""
     # Initialize/load model and set device
     training = model is not None
     if training:  # called by train.py
@@ -103,7 +103,7 @@ def run(
         )
 
     model.eval()
-    pred, targets, loss, dt = [], [], 0, (Profile(device=device), Profile(device=device), Profile(device=device))
+    pred, targets, loss, dt = [], [], 0, (Profile(), Profile(), Profile())
     n = len(dataloader)  # number of batches
     action = "validating" if dataloader.dataset.root.stem == "val" else "testing"
     desc = f"{pbar.desc[:-36]}{action:>36}" if pbar else f"{action}"
@@ -148,7 +148,7 @@ def run(
 
 
 def parse_opt():
-    """Parses and returns command line arguments for YOLOv5 model evaluation and inference settings."""
+    """Parses command-line options for model configuration and returns an argparse.Namespace of options."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default=ROOT / "../datasets/mnist", help="dataset path")
     parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "yolov5s-cls.pt", help="model.pt path(s)")
@@ -168,7 +168,9 @@ def parse_opt():
 
 
 def main(opt):
-    """Executes the YOLOv5 model prediction workflow, handling argument parsing and requirement checks."""
+    """Executes the main pipeline, checks and installs requirements, then runs inference or training based on provided
+    options.
+    """
     check_requirements(ROOT / "requirements.txt", exclude=("tensorboard", "thop"))
     run(**vars(opt))
 

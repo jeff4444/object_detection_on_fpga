@@ -12,7 +12,7 @@ from pathlib import Path
 from utils.general import LOGGER, colorstr
 
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[3]  # YOLOv5 root directory
+ROOT = FILE.parents[3]  # YOLOv3 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 RANK = int(os.getenv("RANK", -1))
@@ -68,7 +68,7 @@ class WandbLogger:
             self.wandb_run = wandb.run or wandb.init(
                 config=opt,
                 resume="allow",
-                project="YOLOv5" if opt.project == "runs/train" else Path(opt.project).stem,
+                project="YOLOv3" if opt.project == "runs/train" else Path(opt.project).stem,
                 entity=opt.entity,
                 name=opt.name if opt.name != "exp" else None,
                 job_type=job_type,
@@ -152,7 +152,7 @@ class WandbLogger:
         LOGGER.info(f"Saving model artifact on epoch {epoch + 1}")
 
     def val_one_image(self, pred, predn, path, names, im):
-        """Evaluates model prediction for a single image, returning metrics and visualizations."""
+        """Evaluates model's prediction for a single image, updating metrics based on comparison with ground truth."""
         pass
 
     def log(self, log_dict):
@@ -179,7 +179,7 @@ class WandbLogger:
                     wandb.log(self.log_dict)
                 except BaseException as e:
                     LOGGER.info(
-                        f"An error occurred in wandb logger. The training will proceed without interruption. More info\n{e}"
+                        f"An error occurred in wandb. The training will proceed without interruption. More info\n{e}"
                     )
                     self.wandb_run.finish()
                     self.wandb_run = None

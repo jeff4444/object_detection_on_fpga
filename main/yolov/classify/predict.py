@@ -1,6 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
-Run YOLOv5 classification inference on images, videos, directories, globs, YouTube, webcam, streams, etc.
+Run YOLOv3 classification inference on images, videos, directories, globs, YouTube, webcam, streams, etc.
 
 Usage - sources:
     $ python classify/predict.py --weights yolov5s-cls.pt --source 0                               # webcam
@@ -38,7 +38,7 @@ import torch
 import torch.nn.functional as F
 
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[1]  # YOLOv5 root directory
+ROOT = FILE.parents[1]  # YOLOv3 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
@@ -84,7 +84,7 @@ def run(
     dnn=False,  # use OpenCV DNN for ONNX inference
     vid_stride=1,  # video frame-rate stride
 ):
-    """Conducts YOLOv5 classification inference on diverse input sources and saves results."""
+    """Performs YOLOv3 classification inference on various input sources and saves or displays results."""
     source = str(source)
     save_img = not nosave and not source.endswith(".txt")  # save inference images
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
@@ -118,7 +118,7 @@ def run(
 
     # Run inference
     model.warmup(imgsz=(1 if pt else bs, 3, *imgsz))  # warmup
-    seen, windows, dt = 0, [], (Profile(device=device), Profile(device=device), Profile(device=device))
+    seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
     for path, im, im0s, vid_cap, s in dataset:
         with dt[0]:
             im = torch.Tensor(im).to(model.device)
@@ -205,7 +205,7 @@ def run(
 
 
 def parse_opt():
-    """Parses command line arguments for YOLOv5 inference settings including model, source, device, and image size."""
+    """Parses command line arguments for model inference settings, returns a Namespace of options."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "yolov5s-cls.pt", help="model path(s)")
     parser.add_argument("--source", type=str, default=ROOT / "data/images", help="file/dir/URL/glob/screen/0(webcam)")
@@ -231,7 +231,7 @@ def parse_opt():
 
 
 def main(opt):
-    """Executes YOLOv5 model inference with options for ONNX DNN and video frame-rate stride adjustments."""
+    """Entry point for running the model; checks requirements and calls `run` with options parsed from CLI."""
     check_requirements(ROOT / "requirements.txt", exclude=("tensorboard", "thop"))
     run(**vars(opt))
 

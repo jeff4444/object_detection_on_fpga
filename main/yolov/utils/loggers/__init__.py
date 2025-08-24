@@ -1,7 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Logging utils."""
 
-import json
 import os
 import warnings
 from pathlib import Path
@@ -23,7 +22,9 @@ try:
 except ImportError:
 
     def SummaryWriter(*args):
-        """Fall back to SummaryWriter returning None if TensorBoard is not installed."""
+        """Imports TensorBoard's SummaryWriter for logging, with a fallback returning None if TensorBoard is not
+        installed.
+        """
         return None  # None = SummaryWriter(str)
 
 
@@ -61,25 +62,13 @@ except (ImportError, AssertionError):
     comet_ml = None
 
 
-def _json_default(value):
-    """
-    Format `value` for JSON serialization (e.g. unwrap tensors).
-
-    Fall back to strings.
-    """
-    if isinstance(value, torch.Tensor):
-        try:
-            value = value.item()
-        except ValueError:  # "only one element tensors can be converted to Python scalars"
-            pass
-    return value if isinstance(value, float) else str(value)
-
-
 class Loggers:
-    """Initializes and manages various logging utilities for tracking YOLOv5 training and validation metrics."""
+    """Manages logging for training and validation using TensorBoard, Weights & Biases, ClearML, and Comet ML."""
 
     def __init__(self, save_dir=None, weights=None, opt=None, hyp=None, logger=None, include=LOGGERS):
-        """Initializes loggers for YOLOv5 training and validation metrics, paths, and options."""
+        """Initializes YOLOv3 logging with directory, weights, options, hyperparameters, and includes specified
+        loggers.
+        """
         self.save_dir = save_dir
         self.weights = weights
         self.opt = opt
@@ -106,13 +95,11 @@ class Loggers:
         for k in LOGGERS:
             setattr(self, k, None)  # init empty logger dictionary
         self.csv = True  # always log to csv
-        self.ndjson_console = "ndjson_console" in self.include  # log ndjson to console
-        self.ndjson_file = "ndjson_file" in self.include  # log ndjson to file
 
         # Messages
         if not comet_ml:
             prefix = colorstr("Comet: ")
-            s = f"{prefix}run 'pip install comet_ml' to automatically track and visualize YOLOv5 🚀 runs in Comet"
+            s = f"{prefix}run 'pip install comet_ml' to automatically track and visualize YOLOv3 🚀 runs in Comet"
             self.logger.info(s)
         # TensorBoard
         s = self.save_dir
@@ -157,7 +144,7 @@ class Loggers:
 
     @property
     def remote_dataset(self):
-        """Fetches dataset dictionary from remote logging services like ClearML, Weights & Biases, or Comet ML."""
+        """Fetches dataset dictionary from ClearML, W&B, or Comet ML based on the logger instantiated."""
         data_dict = None
         if self.clearml:
             data_dict = self.clearml.data_dict
@@ -169,30 +156,33 @@ class Loggers:
         return data_dict
 
     def on_train_start(self):
-        """Initializes the training process for Comet ML logger if it's configured."""
+        """Calls `on_train_start` method on comet_logger if it's available."""
         if self.comet_logger:
             self.comet_logger.on_train_start()
 
     def on_pretrain_routine_start(self):
-        """Invokes pre-training routine start hook for Comet ML logger if available."""
+        """Initiates pretraining routine on comet_logger if available."""
         if self.comet_logger:
             self.comet_logger.on_pretrain_routine_start()
 
     def on_pretrain_routine_end(self, labels, names):
-        """Callback that runs at the end of pre-training routine, logging label plots if enabled."""
+        """
+        Logs pretrain routine end, plots labels if enabled, updates WandB/Comet with images.
+
+        Takes `labels` (List of int), `names` (List of str).
+        """
         if self.plots:
             plot_labels(labels, names, self.save_dir)
             paths = self.save_dir.glob("*labels*.jpg")  # training labels
             if self.wandb:
                 self.wandb.log({"Labels": [wandb.Image(str(x), caption=x.name) for x in paths]})
+            # if self.clearml:
+            #    pass  # ClearML saves these images automatically using hooks
             if self.comet_logger:
                 self.comet_logger.on_pretrain_routine_end(paths)
-            if self.clearml:
-                for path in paths:
-                    self.clearml.log_plot(title=path.stem, plot_path=path)
 
     def on_train_batch_end(self, model, ni, imgs, targets, paths, vals):
-        """Logs training batch end events, plots images, and updates external loggers with batch-end data."""
+        """Logs training batch details, plots initial batches, logs Tensorboard and WandB/ClearML if enabled."""
         log_dict = dict(zip(self.keys[:3], vals))
         # Callback runs on train batch end
         # ni: number integrated batches (since train start)
@@ -213,7 +203,7 @@ class Loggers:
             self.comet_logger.on_train_batch_end(log_dict, step=ni)
 
     def on_train_epoch_end(self, epoch):
-        """Callback that updates the current epoch in Weights & Biases at the end of a training epoch."""
+        """Callback that updates the current epoch in wandb at the end of each training epoch."""
         if self.wandb:
             self.wandb.current_epoch = epoch + 1
 
@@ -221,24 +211,30 @@ class Loggers:
             self.comet_logger.on_train_epoch_end(epoch)
 
     def on_val_start(self):
-        """Callback that signals the start of a validation phase to the Comet logger."""
+        """Callback that notifies the comet logger at the start of each validation phase."""
         if self.comet_logger:
             self.comet_logger.on_val_start()
 
     def on_val_image_end(self, pred, predn, path, names, im):
-        """Callback that logs a validation image and its predictions to WandB or ClearML."""
+        """Callback for logging a single validation image and its predictions to WandB or ClearML at the end of
+        validation.
+        """
         if self.wandb:
             self.wandb.val_one_image(pred, predn, path, names, im)
         if self.clearml:
             self.clearml.log_image_with_boxes(path, pred, names, im)
 
     def on_val_batch_end(self, batch_i, im, targets, paths, shapes, out):
-        """Logs validation batch results to Comet ML during training at the end of each validation batch."""
+        """
+        Logs a single validation batch for Comet ML analytics (batch_i: int, im: tensor, targets: tensor, paths:
+
+        list, shapes: list, out: tensor).
+        """
         if self.comet_logger:
             self.comet_logger.on_val_batch_end(batch_i, im, targets, paths, shapes, out)
 
     def on_val_end(self, nt, tp, fp, p, r, f1, ap, ap50, ap_class, confusion_matrix):
-        """Logs validation results to WandB or ClearML at the end of the validation process."""
+        """Logs validation results and images on validation end for visual analytics."""
         if self.wandb or self.clearml:
             files = sorted(self.save_dir.glob("val*.jpg"))
         if self.wandb:
@@ -250,7 +246,7 @@ class Loggers:
             self.comet_logger.on_val_end(nt, tp, fp, p, r, f1, ap, ap50, ap_class, confusion_matrix)
 
     def on_fit_epoch_end(self, vals, epoch, best_fitness, fi):
-        """Callback that logs metrics and saves them to CSV or NDJSON at the end of each fit (train+val) epoch."""
+        """Logs epoch results to CSV if enabled, updating with vals, best_fitness, and fi."""
         x = dict(zip(self.keys, vals))
         if self.csv:
             file = self.save_dir / "results.csv"
@@ -258,20 +254,14 @@ class Loggers:
             s = "" if file.exists() else (("%20s," * n % tuple(["epoch"] + self.keys)).rstrip(",") + "\n")  # add header
             with open(file, "a") as f:
                 f.write(s + ("%20.5g," * n % tuple([epoch] + vals)).rstrip(",") + "\n")
-        if self.ndjson_console or self.ndjson_file:
-            json_data = json.dumps(dict(epoch=epoch, **x), default=_json_default)
-        if self.ndjson_console:
-            print(json_data)
-        if self.ndjson_file:
-            file = self.save_dir / "results.ndjson"
-            with open(file, "a") as f:
-                print(json_data, file=f)
 
         if self.tb:
             for k, v in x.items():
                 self.tb.add_scalar(k, v, epoch)
         elif self.clearml:  # log to ClearML if TensorBoard not used
-            self.clearml.log_scalars(x, epoch)
+            for k, v in x.items():
+                title, series = k.split("/")
+                self.clearml.task.get_logger().report_scalar(title, series, v, epoch)
 
         if self.wandb:
             if best_fitness == fi:
@@ -289,7 +279,9 @@ class Loggers:
             self.comet_logger.on_fit_epoch_end(x, epoch=epoch)
 
     def on_model_save(self, last, epoch, final_epoch, best_fitness, fi):
-        """Callback that handles model saving events, logging to Weights & Biases or ClearML if enabled."""
+        """Logs model to WandB/ClearML, considering save_period and if not final_epoch, also notes if best model so
+        far.
+        """
         if (epoch + 1) % self.opt.save_period == 0 and not final_epoch and self.opt.save_period != -1:
             if self.wandb:
                 self.wandb.log_model(last.parent, self.opt, epoch, fi, best_model=best_fitness == fi)
@@ -302,7 +294,9 @@ class Loggers:
             self.comet_logger.on_model_save(last, epoch, final_epoch, best_fitness, fi)
 
     def on_train_end(self, last, best, epoch, results):
-        """Callback that runs at the end of training to save plots and log results."""
+        """Callback to execute at training end, saving plots of results and relevant metrics to the specified save
+        directory.
+        """
         if self.plots:
             plot_results(file=self.save_dir / "results.csv")  # save results.png
         files = ["results.png", "confusion_matrix.png", *(f"{x}_curve.png" for x in ("F1", "PR", "P", "R"))]
@@ -327,10 +321,8 @@ class Loggers:
             self.wandb.finish_run()
 
         if self.clearml and not self.opt.evolve:
-            self.clearml.log_summary(dict(zip(self.keys[3:10], results)))
-            [self.clearml.log_plot(title=f.stem, plot_path=f) for f in files]
-            self.clearml.log_model(
-                str(best if best.exists() else last), "Best Model" if best.exists() else "Last Model", epoch
+            self.clearml.task.update_output_model(
+                model_path=str(best if best.exists() else last), name="Best Model", auto_delete_file=False
             )
 
         if self.comet_logger:
@@ -338,18 +330,16 @@ class Loggers:
             self.comet_logger.on_train_end(files, self.save_dir, last, best, epoch, final_results)
 
     def on_params_update(self, params: dict):
-        """Updates experiment hyperparameters or configurations in WandB, Comet, or ClearML."""
+        """Updates experiment hyperparameters or configs in WandB and Comet logger with provided params dictionary."""
         if self.wandb:
             self.wandb.wandb_run.config.update(params, allow_val_change=True)
         if self.comet_logger:
             self.comet_logger.on_params_update(params)
-        if self.clearml:
-            self.clearml.task.connect(params)
 
 
 class GenericLogger:
     """
-    YOLOv5 General purpose logger for non-task specific logging
+    YOLOv3 General purpose logger for non-task specific logging
     Usage: from utils.loggers import GenericLogger; logger = GenericLogger(...).
 
     Arguments:
@@ -358,8 +348,8 @@ class GenericLogger:
         include:         loggers to include
     """
 
-    def __init__(self, opt, console_logger, include=("tb", "wandb", "clearml")):
-        """Initializes a generic logger with optional TensorBoard, W&B, and ClearML support."""
+    def __init__(self, opt, console_logger, include=("tb", "wandb")):
+        """Initializes a generic logger for YOLOv3, including options for TensorBoard and wandb logging."""
         self.save_dir = Path(opt.save_dir)
         self.include = include
         self.console_logger = console_logger
@@ -378,23 +368,8 @@ class GenericLogger:
         else:
             self.wandb = None
 
-        if clearml and "clearml" in self.include:
-            try:
-                # Hyp is not available in classification mode
-                hyp = {} if "hyp" not in opt else opt.hyp
-                self.clearml = ClearmlLogger(opt, hyp)
-            except Exception:
-                self.clearml = None
-                prefix = colorstr("ClearML: ")
-                LOGGER.warning(
-                    f"{prefix}WARNING ⚠️ ClearML is installed but not configured, skipping ClearML logging."
-                    f" See https://docs.ultralytics.com/yolov5/tutorials/clearml_logging_integration"
-                )
-        else:
-            self.clearml = None
-
     def log_metrics(self, metrics, epoch):
-        """Logs metrics to CSV, TensorBoard, W&B, and ClearML; `metrics` is a dict, `epoch` is an int."""
+        """Logs metric dictionary to all loggers, including CSV with keys, values, and epoch."""
         if self.csv:
             keys, vals = list(metrics.keys()), list(metrics.values())
             n = len(metrics) + 1  # number of cols
@@ -409,11 +384,8 @@ class GenericLogger:
         if self.wandb:
             self.wandb.log(metrics, step=epoch)
 
-        if self.clearml:
-            self.clearml.log_scalars(metrics, epoch)
-
     def log_images(self, files, name="Images", epoch=0):
-        """Logs images to all loggers with optional naming and epoch specification."""
+        """Logs images to TensorBoard and Weights & Biases, ensuring file existence and supporting various formats."""
         files = [Path(f) for f in (files if isinstance(files, (tuple, list)) else [files])]  # to Path
         files = [f for f in files if f.exists()]  # filter by exists
 
@@ -424,39 +396,28 @@ class GenericLogger:
         if self.wandb:
             self.wandb.log({name: [wandb.Image(str(f), caption=f.name) for f in files]}, step=epoch)
 
-        if self.clearml:
-            if name == "Results":
-                [self.clearml.log_plot(f.stem, f) for f in files]
-            else:
-                self.clearml.log_debug_samples(files, title=name)
-
     def log_graph(self, model, imgsz=(640, 640)):
-        """Logs model graph to all configured loggers with specified input image size."""
+        """Logs model graph to all loggers, accepts `model` and `imgsz` (default (640, 640)) as inputs."""
         if self.tb:
             log_tensorboard_graph(self.tb, model, imgsz)
 
     def log_model(self, model_path, epoch=0, metadata=None):
-        """Logs the model to all configured loggers with optional epoch and metadata."""
+        """Logs model to all loggers with `model_path`, optional `epoch` (default 0), and `metadata` dictionary."""
         if metadata is None:
             metadata = {}
-        # Log model to all loggers
         if self.wandb:
             art = wandb.Artifact(name=f"run_{wandb.run.id}_model", type="model", metadata=metadata)
             art.add_file(str(model_path))
             wandb.log_artifact(art)
-        if self.clearml:
-            self.clearml.log_model(model_path=model_path, model_name=model_path.stem)
 
     def update_params(self, params):
-        """Updates logged parameters in WandB and/or ClearML if enabled."""
+        """Updates logged parameters in wandb; `params`: dictionary to update, requires `wandb` to be initialized."""
         if self.wandb:
             wandb.run.config.update(params, allow_val_change=True)
-        if self.clearml:
-            self.clearml.task.connect(params)
 
 
 def log_tensorboard_graph(tb, model, imgsz=(640, 640)):
-    """Logs the model graph to TensorBoard with specified image size and model."""
+    """Logs a model graph to TensorBoard using an all-zero input image of shape `(1, 3, imgsz, imgsz)`."""
     try:
         p = next(model.parameters())  # for device, type
         imgsz = (imgsz, imgsz) if isinstance(imgsz, int) else imgsz  # expand
@@ -469,8 +430,10 @@ def log_tensorboard_graph(tb, model, imgsz=(640, 640)):
 
 
 def web_project_name(project):
-    """Converts a local project name to a standardized web project name with optional suffixes."""
+    """Converts local project name to a web-friendly format by adding a suffix based on its type (classify or
+    segment).
+    """
     if not project.startswith("runs/train"):
         return project
     suffix = "-Classify" if project.endswith("-cls") else "-Segment" if project.endswith("-seg") else ""
-    return f"YOLOv5{suffix}"
+    return f"YOLOv3{suffix}"

@@ -1,6 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """
-Train a YOLOv5 model on a custom dataset. Models and datasets download automatically from the latest YOLOv5 release.
+Train a YOLOv3 model on a custom dataset. Models and datasets download automatically from the latest YOLOv3 release.
 
 Usage - Single-GPU training:
     $ python train.py --data coco128.yaml --weights yolov5s.pt --img 640  # from pretrained (recommended)
@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -39,7 +39,7 @@ from torch.optim import lr_scheduler
 from tqdm import tqdm
 
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[0]  # YOLOv5 root directory
+ROOT = FILE.parents[0]  # YOLOv3 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
@@ -80,7 +80,7 @@ from utils.general import (
     strip_optimizer,
     yaml_save,
 )
-from utils.loggers import LOGGERS, Loggers
+from utils.loggers import Loggers
 from utils.loggers.comet.comet_utils import check_comet_resume
 from utils.loss import ComputeLoss
 from utils.metrics import fitness
@@ -102,39 +102,54 @@ WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
 GIT_INFO = check_git_info()
 
 
-def train(hyp, opt, device, callbacks):
+def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
     """
-    Train a YOLOv5 model on a custom dataset using specified hyperparameters, options, and device, managing datasets,
-    model architecture, loss computation, and optimizer steps.
+    Train a YOLOv3 model on a custom dataset and manage the training process.
 
     Args:
-        hyp (str | dict): Path to the hyperparameters YAML file or a dictionary of hyperparameters.
-        opt (argparse.Namespace): Parsed command-line arguments containing training options.
-        device (torch.device): Device on which training occurs, e.g., 'cuda' or 'cpu'.
-        callbacks (Callbacks): Callback functions for various training events.
+        hyp (str | dict): Path to hyperparameters yaml file or hyperparameters dictionary.
+        opt (argparse.Namespace): Parsed command line arguments containing training options.
+        device (torch.device): Device to load and train the model on.
+        callbacks (Callbacks): Callbacks to handle various stages of the training lifecycle.
 
     Returns:
         None
 
-    Models and datasets download automatically from the latest YOLOv5 release.
-
-    Example:
-        Single-GPU training:
-        ```bash
+    Usage - Single-GPU training:
         $ python train.py --data coco128.yaml --weights yolov5s.pt --img 640  # from pretrained (recommended)
         $ python train.py --data coco128.yaml --weights '' --cfg yolov5s.yaml --img 640  # from scratch
-        ```
 
-        Multi-GPU DDP training:
-        ```bash
+    Usage - Multi-GPU DDP training:
         $ python -m torch.distributed.run --nproc_per_node 4 --master_port 1 train.py --data coco128.yaml --weights
-        yolov5s.pt --img 640 --device 0,1,2,3
-        ```
+            yolov5s.pt --img 640 --device 0,1,2,3
 
-        For more usage details, refer to:
-        - Models: https://github.com/ultralytics/yolov5/tree/master/models
-        - Datasets: https://github.com/ultralytics/yolov5/tree/master/data
-        - Tutorial: https://docs.ultralytics.com/yolov5/tutorials/train_custom_data
+    Models: https://github.com/ultralytics/yolov5/tree/master/models
+    Datasets: https://github.com/ultralytics/yolov5/tree/master/data
+    Tutorial: https://docs.ultralytics.com/yolov5/tutorials/train_custom_data
+
+    Examples:
+        ```python
+        from ultralytics import train
+        import argparse
+        import torch
+        from utils.callbacks import Callbacks
+
+        # Example usage
+        args = argparse.Namespace(
+            data='coco128.yaml',
+            weights='yolov5s.pt',
+            cfg='yolov5s.yaml',
+            img_size=640,
+            epochs=50,
+            batch_size=16,
+            device='0'
+        )
+
+        device = torch.device(f'cuda:{args.device}' if torch.cuda.is_available() else 'cpu')
+        callbacks = Callbacks()
+
+        train(hyp='hyp.scratch.yaml', opt=args, device=device, callbacks=callbacks)
+        ```
     """
     save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze = (
         Path(opt.save_dir),
@@ -173,20 +188,7 @@ def train(hyp, opt, device, callbacks):
     # Loggers
     data_dict = None
     if RANK in {-1, 0}:
-        include_loggers = list(LOGGERS)
-        if getattr(opt, "ndjson_console", False):
-            include_loggers.append("ndjson_console")
-        if getattr(opt, "ndjson_file", False):
-            include_loggers.append("ndjson_file")
-
-        loggers = Loggers(
-            save_dir=save_dir,
-            weights=weights,
-            opt=opt,
-            hyp=hyp,
-            logger=LOGGER,
-            include=tuple(include_loggers),
-        )
+        loggers = Loggers(save_dir, weights, opt, hyp, LOGGER)  # loggers instance
 
         # Register actions
         for k in methods(loggers):
@@ -545,28 +547,31 @@ def train(hyp, opt, device, callbacks):
 
 def parse_opt(known=False):
     """
-    Parse command-line arguments for YOLOv5 training, validation, and testing.
+    Parse command line arguments for configuring the training of a YOLO model.
 
     Args:
-        known (bool, optional): If True, parses known arguments, ignoring the unknown. Defaults to False.
+        known (bool): Flag to parse known arguments only, defaults to False.
 
     Returns:
-        (argparse.Namespace): Parsed command-line arguments containing options for YOLOv5 execution.
+        (argparse.Namespace): Parsed command line arguments.
 
-    Example:
+    Examples:
         ```python
-        from ultralytics.yolo import parse_opt
-        opt = parse_opt()
-        print(opt)
+        options = parse_opt()
+        print(options.weights)
         ```
 
-    Links:
-        - Models: https://github.com/ultralytics/yolov5/tree/master/models
-        - Datasets: https://github.com/ultralytics/yolov5/tree/master/data
-        - Tutorial: https://docs.ultralytics.com/yolov5/tutorials/train_custom_data
+    Notes:
+        * The default weights path is 'yolov3-tiny.pt'.
+        * Set `known` to True for parsing only the known arguments, useful for partial arguments.
+
+    References:
+        * Models: https://github.com/ultralytics/yolov5/tree/master/models
+        * Datasets: https://github.com/ultralytics/yolov5/tree/master/data
+        * Training Tutorial: https://docs.ultralytics.com/yolov5/tutorials/train_custom_data
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--weights", type=str, default=ROOT / "yolov5s.pt", help="initial weights path")
+    parser.add_argument("--weights", type=str, default=ROOT / "yolov3-tiny.pt", help="initial weights path")
     parser.add_argument("--cfg", type=str, default="", help="model.yaml path")
     parser.add_argument("--data", type=str, default=ROOT / "data/coco128.yaml", help="dataset.yaml path")
     parser.add_argument("--hyp", type=str, default=ROOT / "data/hyps/hyp.scratch-low.yaml", help="hyperparameters path")
@@ -580,10 +585,6 @@ def parse_opt(known=False):
     parser.add_argument("--noautoanchor", action="store_true", help="disable AutoAnchor")
     parser.add_argument("--noplots", action="store_true", help="save no plot files")
     parser.add_argument("--evolve", type=int, nargs="?", const=300, help="evolve hyperparameters for x generations")
-    parser.add_argument(
-        "--evolve_population", type=str, default=ROOT / "data/hyps", help="location for loading population"
-    )
-    parser.add_argument("--resume_evolve", type=str, default=None, help="resume evolve from last generation")
     parser.add_argument("--bucket", type=str, default="", help="gsutil bucket")
     parser.add_argument("--cache", type=str, nargs="?", const="ram", help="image --cache ram/disk")
     parser.add_argument("--image-weights", action="store_true", help="use weighted image selection for training")
@@ -611,28 +612,42 @@ def parse_opt(known=False):
     parser.add_argument("--bbox_interval", type=int, default=-1, help="Set bounding-box image logging interval")
     parser.add_argument("--artifact_alias", type=str, default="latest", help="Version of dataset artifact to use")
 
-    # NDJSON logging
-    parser.add_argument("--ndjson-console", action="store_true", help="Log ndjson to console")
-    parser.add_argument("--ndjson-file", action="store_true", help="Log ndjson to file")
-
     return parser.parse_known_args()[0] if known else parser.parse_args()
 
 
 def main(opt, callbacks=Callbacks()):
     """
-    Runs the main entry point for training or hyperparameter evolution with specified options and optional callbacks.
+    Main training/evolution script handling model checks, DDP setup, training, and hyperparameter evolution.
 
     Args:
-        opt (argparse.Namespace): The command-line arguments parsed for YOLOv5 training and evolution.
-        callbacks (ultralytics.utils.callbacks.Callbacks, optional): Callback functions for various training stages.
-            Defaults to Callbacks().
+        opt (argparse.Namespace): Parsed command-line options.
+        callbacks (Callbacks, optional): Callback object for handling training events. Defaults to Callbacks().
 
     Returns:
         None
 
-    Note:
-        For detailed usage, refer to:
-        https://github.com/ultralytics/yolov5/tree/master/models
+    Raises:
+        AssertionError: If certain constraints are violated (e.g., when specific options are incompatible with DDP training).
+
+    Notes:
+       - For a tutorial on using Multi-GPU with DDP: https://docs.ultralytics.com/yolov5/tutorials/multi_gpu_training
+
+    Example:
+        Single-GPU training:
+        ```python
+        $ python train.py --data coco128.yaml --weights yolov5s.pt --img 640  # from pretrained (recommended)
+        $ python train.py --data coco128.yaml --weights '' --cfg yolov5s.yaml --img 640  # from scratch
+        ```
+
+        Multi-GPU DDP training:
+        ```python
+        $ python -m torch.distributed.run --nproc_per_node 4 --master_port 1 train.py --data coco128.yaml \
+        --weights yolov5s.pt --img 640 --device 0,1,2,3
+        ```
+
+        Models: https://github.com/ultralytics/yolov5/tree/master/models
+        Datasets: https://github.com/ultralytics/yolov5/tree/master/data
+        Tutorial: https://docs.ultralytics.com/yolov5/tutorials/train_custom_data
     """
     if RANK in {-1, 0}:
         print_args(vars(opt))
@@ -673,7 +688,7 @@ def main(opt, callbacks=Callbacks()):
     # DDP mode
     device = select_device(opt.device, batch_size=opt.batch_size)
     if LOCAL_RANK != -1:
-        msg = "is not compatible with YOLOv5 Multi-GPU DDP training"
+        msg = "is not compatible with YOLOv3 Multi-GPU DDP training"
         assert not opt.image_weights, f"--image-weights {msg}"
         assert not opt.evolve, f"--evolve {msg}"
         assert opt.batch_size != -1, f"AutoBatch with --batch-size -1 {msg}, please pass a valid --batch-size"
@@ -681,9 +696,7 @@ def main(opt, callbacks=Callbacks()):
         assert torch.cuda.device_count() > LOCAL_RANK, "insufficient CUDA devices for DDP command"
         torch.cuda.set_device(LOCAL_RANK)
         device = torch.device("cuda", LOCAL_RANK)
-        dist.init_process_group(
-            backend="nccl" if dist.is_nccl_available() else "gloo", timeout=timedelta(seconds=10800)
-        )
+        dist.init_process_group(backend="nccl" if dist.is_nccl_available() else "gloo")
 
     # Train
     if not opt.evolve:
@@ -691,49 +704,38 @@ def main(opt, callbacks=Callbacks()):
 
     # Evolve hyperparameters (optional)
     else:
-        # Hyperparameter evolution metadata (including this hyperparameter True-False, lower_limit, upper_limit)
+        # Hyperparameter evolution metadata (mutation scale 0-1, lower_limit, upper_limit)
         meta = {
-            "lr0": (False, 1e-5, 1e-1),  # initial learning rate (SGD=1E-2, Adam=1E-3)
-            "lrf": (False, 0.01, 1.0),  # final OneCycleLR learning rate (lr0 * lrf)
-            "momentum": (False, 0.6, 0.98),  # SGD momentum/Adam beta1
-            "weight_decay": (False, 0.0, 0.001),  # optimizer weight decay
-            "warmup_epochs": (False, 0.0, 5.0),  # warmup epochs (fractions ok)
-            "warmup_momentum": (False, 0.0, 0.95),  # warmup initial momentum
-            "warmup_bias_lr": (False, 0.0, 0.2),  # warmup initial bias lr
-            "box": (False, 0.02, 0.2),  # box loss gain
-            "cls": (False, 0.2, 4.0),  # cls loss gain
-            "cls_pw": (False, 0.5, 2.0),  # cls BCELoss positive_weight
-            "obj": (False, 0.2, 4.0),  # obj loss gain (scale with pixels)
-            "obj_pw": (False, 0.5, 2.0),  # obj BCELoss positive_weight
-            "iou_t": (False, 0.1, 0.7),  # IoU training threshold
-            "anchor_t": (False, 2.0, 8.0),  # anchor-multiple threshold
-            "anchors": (False, 2.0, 10.0),  # anchors per output grid (0 to ignore)
-            "fl_gamma": (False, 0.0, 2.0),  # focal loss gamma (efficientDet default gamma=1.5)
-            "hsv_h": (True, 0.0, 0.1),  # image HSV-Hue augmentation (fraction)
-            "hsv_s": (True, 0.0, 0.9),  # image HSV-Saturation augmentation (fraction)
-            "hsv_v": (True, 0.0, 0.9),  # image HSV-Value augmentation (fraction)
-            "degrees": (True, 0.0, 45.0),  # image rotation (+/- deg)
-            "translate": (True, 0.0, 0.9),  # image translation (+/- fraction)
-            "scale": (True, 0.0, 0.9),  # image scale (+/- gain)
-            "shear": (True, 0.0, 10.0),  # image shear (+/- deg)
-            "perspective": (True, 0.0, 0.001),  # image perspective (+/- fraction), range 0-0.001
-            "flipud": (True, 0.0, 1.0),  # image flip up-down (probability)
-            "fliplr": (True, 0.0, 1.0),  # image flip left-right (probability)
-            "mosaic": (True, 0.0, 1.0),  # image mosaic (probability)
-            "mixup": (True, 0.0, 1.0),  # image mixup (probability)
-            "copy_paste": (True, 0.0, 1.0),  # segment copy-paste (probability)
-        }
-
-        # GA configs
-        pop_size = 50
-        mutation_rate_min = 0.01
-        mutation_rate_max = 0.5
-        crossover_rate_min = 0.5
-        crossover_rate_max = 1
-        min_elite_size = 2
-        max_elite_size = 5
-        tournament_size_min = 2
-        tournament_size_max = 10
+            "lr0": (1, 1e-5, 1e-1),  # initial learning rate (SGD=1E-2, Adam=1E-3)
+            "lrf": (1, 0.01, 1.0),  # final OneCycleLR learning rate (lr0 * lrf)
+            "momentum": (0.3, 0.6, 0.98),  # SGD momentum/Adam beta1
+            "weight_decay": (1, 0.0, 0.001),  # optimizer weight decay
+            "warmup_epochs": (1, 0.0, 5.0),  # warmup epochs (fractions ok)
+            "warmup_momentum": (1, 0.0, 0.95),  # warmup initial momentum
+            "warmup_bias_lr": (1, 0.0, 0.2),  # warmup initial bias lr
+            "box": (1, 0.02, 0.2),  # box loss gain
+            "cls": (1, 0.2, 4.0),  # cls loss gain
+            "cls_pw": (1, 0.5, 2.0),  # cls BCELoss positive_weight
+            "obj": (1, 0.2, 4.0),  # obj loss gain (scale with pixels)
+            "obj_pw": (1, 0.5, 2.0),  # obj BCELoss positive_weight
+            "iou_t": (0, 0.1, 0.7),  # IoU training threshold
+            "anchor_t": (1, 2.0, 8.0),  # anchor-multiple threshold
+            "anchors": (2, 2.0, 10.0),  # anchors per output grid (0 to ignore)
+            "fl_gamma": (0, 0.0, 2.0),  # focal loss gamma (efficientDet default gamma=1.5)
+            "hsv_h": (1, 0.0, 0.1),  # image HSV-Hue augmentation (fraction)
+            "hsv_s": (1, 0.0, 0.9),  # image HSV-Saturation augmentation (fraction)
+            "hsv_v": (1, 0.0, 0.9),  # image HSV-Value augmentation (fraction)
+            "degrees": (1, 0.0, 45.0),  # image rotation (+/- deg)
+            "translate": (1, 0.0, 0.9),  # image translation (+/- fraction)
+            "scale": (1, 0.0, 0.9),  # image scale (+/- gain)
+            "shear": (1, 0.0, 10.0),  # image shear (+/- deg)
+            "perspective": (0, 0.0, 0.001),  # image perspective (+/- fraction), range 0-0.001
+            "flipud": (1, 0.0, 1.0),  # image flip up-down (probability)
+            "fliplr": (0, 0.0, 1.0),  # image flip left-right (probability)
+            "mosaic": (1, 0.0, 1.0),  # image mixup (probability)
+            "mixup": (1, 0.0, 1.0),  # image mixup (probability)
+            "copy_paste": (1, 0.0, 1.0),
+        }  # segment copy-paste (probability)
 
         with open(opt.hyp, errors="ignore") as f:
             hyp = yaml.safe_load(f)  # load hyps dict
@@ -755,130 +757,53 @@ def main(opt, callbacks=Callbacks()):
                 ]
             )
 
-        # Delete the items in meta dictionary whose first value is False
-        del_ = [item for item, value_ in meta.items() if value_[0] is False]
-        hyp_GA = hyp.copy()  # Make a copy of hyp dictionary
-        for item in del_:
-            del meta[item]  # Remove the item from meta dictionary
-            del hyp_GA[item]  # Remove the item from hyp_GA dictionary
+        for _ in range(opt.evolve):  # generations to evolve
+            if evolve_csv.exists():  # if evolve.csv exists: select best hyps and mutate
+                # Select parent(s)
+                parent = "single"  # parent selection method: 'single' or 'weighted'
+                x = np.loadtxt(evolve_csv, ndmin=2, delimiter=",", skiprows=1)
+                n = min(5, len(x))  # number of previous results to consider
+                x = x[np.argsort(-fitness(x))][:n]  # top n mutations
+                w = fitness(x) - fitness(x).min() + 1e-6  # weights (sum > 0)
+                if parent == "single" or len(x) == 1:
+                    # x = x[random.randint(0, n - 1)]  # random selection
+                    x = x[random.choices(range(n), weights=w)[0]]  # weighted selection
+                elif parent == "weighted":
+                    x = (x * w.reshape(n, 1)).sum(0) / w.sum()  # weighted combination
 
-        # Set lower_limit and upper_limit arrays to hold the search space boundaries
-        lower_limit = np.array([meta[k][1] for k in hyp_GA.keys()])
-        upper_limit = np.array([meta[k][2] for k in hyp_GA.keys()])
+                # Mutate
+                mp, s = 0.8, 0.2  # mutation probability, sigma
+                npr = np.random
+                npr.seed(int(time.time()))
+                g = np.array([meta[k][0] for k in hyp.keys()])  # gains 0-1
+                ng = len(meta)
+                v = np.ones(ng)
+                while all(v == 1):  # mutate until a change occurs (prevent duplicates)
+                    v = (g * (npr.random(ng) < mp) * npr.randn(ng) * npr.random() * s + 1).clip(0.3, 3.0)
+                for i, k in enumerate(hyp.keys()):  # plt.hist(v.ravel(), 300)
+                    hyp[k] = float(x[i + 7] * v[i])  # mutate
 
-        # Create gene_ranges list to hold the range of values for each gene in the population
-        gene_ranges = [(lower_limit[i], upper_limit[i]) for i in range(len(upper_limit))]
+            # Constrain to limits
+            for k, v in meta.items():
+                hyp[k] = max(hyp[k], v[1])  # lower limit
+                hyp[k] = min(hyp[k], v[2])  # upper limit
+                hyp[k] = round(hyp[k], 5)  # significant digits
 
-        # Initialize the population with initial_values or random values
-        initial_values = []
+            # Train mutation
+            results = train(hyp.copy(), opt, device, callbacks)
+            callbacks = Callbacks()
+            # Write mutation results
+            keys = (
+                "metrics/precision",
+                "metrics/recall",
+                "metrics/mAP_0.5",
+                "metrics/mAP_0.5:0.95",
+                "val/box_loss",
+                "val/obj_loss",
+                "val/cls_loss",
+            )
+            print_mutation(keys, results, hyp.copy(), save_dir, opt.bucket)
 
-        # If resuming evolution from a previous checkpoint
-        if opt.resume_evolve is not None:
-            assert os.path.isfile(ROOT / opt.resume_evolve), "evolve population path is wrong!"
-            with open(ROOT / opt.resume_evolve, errors="ignore") as f:
-                evolve_population = yaml.safe_load(f)
-                for value in evolve_population.values():
-                    value = np.array([value[k] for k in hyp_GA.keys()])
-                    initial_values.append(list(value))
-
-        # If not resuming from a previous checkpoint, generate initial values from .yaml files in opt.evolve_population
-        else:
-            yaml_files = [f for f in os.listdir(opt.evolve_population) if f.endswith(".yaml")]
-            for file_name in yaml_files:
-                with open(os.path.join(opt.evolve_population, file_name)) as yaml_file:
-                    value = yaml.safe_load(yaml_file)
-                    value = np.array([value[k] for k in hyp_GA.keys()])
-                    initial_values.append(list(value))
-
-        # Generate random values within the search space for the rest of the population
-        if initial_values is None:
-            population = [generate_individual(gene_ranges, len(hyp_GA)) for _ in range(pop_size)]
-        elif pop_size > 1:
-            population = [generate_individual(gene_ranges, len(hyp_GA)) for _ in range(pop_size - len(initial_values))]
-            for initial_value in initial_values:
-                population = [initial_value] + population
-
-        # Run the genetic algorithm for a fixed number of generations
-        list_keys = list(hyp_GA.keys())
-        for generation in range(opt.evolve):
-            if generation >= 1:
-                save_dict = {}
-                for i in range(len(population)):
-                    little_dict = {list_keys[j]: float(population[i][j]) for j in range(len(population[i]))}
-                    save_dict[f"gen{str(generation)}number{str(i)}"] = little_dict
-
-                with open(save_dir / "evolve_population.yaml", "w") as outfile:
-                    yaml.dump(save_dict, outfile, default_flow_style=False)
-
-            # Adaptive elite size
-            elite_size = min_elite_size + int((max_elite_size - min_elite_size) * (generation / opt.evolve))
-            # Evaluate the fitness of each individual in the population
-            fitness_scores = []
-            for individual in population:
-                for key, value in zip(hyp_GA.keys(), individual):
-                    hyp_GA[key] = value
-                hyp.update(hyp_GA)
-                results = train(hyp.copy(), opt, device, callbacks)
-                callbacks = Callbacks()
-                # Write mutation results
-                keys = (
-                    "metrics/precision",
-                    "metrics/recall",
-                    "metrics/mAP_0.5",
-                    "metrics/mAP_0.5:0.95",
-                    "val/box_loss",
-                    "val/obj_loss",
-                    "val/cls_loss",
-                )
-                print_mutation(keys, results, hyp.copy(), save_dir, opt.bucket)
-                fitness_scores.append(results[2])
-
-            # Select the fittest individuals for reproduction using adaptive tournament selection
-            selected_indices = []
-            for _ in range(pop_size - elite_size):
-                # Adaptive tournament size
-                tournament_size = max(
-                    max(2, tournament_size_min),
-                    int(min(tournament_size_max, pop_size) - (generation / (opt.evolve / 10))),
-                )
-                # Perform tournament selection to choose the best individual
-                tournament_indices = random.sample(range(pop_size), tournament_size)
-                tournament_fitness = [fitness_scores[j] for j in tournament_indices]
-                winner_index = tournament_indices[tournament_fitness.index(max(tournament_fitness))]
-                selected_indices.append(winner_index)
-
-            # Add the elite individuals to the selected indices
-            elite_indices = [i for i in range(pop_size) if fitness_scores[i] in sorted(fitness_scores)[-elite_size:]]
-            selected_indices.extend(elite_indices)
-            # Create the next generation through crossover and mutation
-            next_generation = []
-            for _ in range(pop_size):
-                parent1_index = selected_indices[random.randint(0, pop_size - 1)]
-                parent2_index = selected_indices[random.randint(0, pop_size - 1)]
-                # Adaptive crossover rate
-                crossover_rate = max(
-                    crossover_rate_min, min(crossover_rate_max, crossover_rate_max - (generation / opt.evolve))
-                )
-                if random.uniform(0, 1) < crossover_rate:
-                    crossover_point = random.randint(1, len(hyp_GA) - 1)
-                    child = population[parent1_index][:crossover_point] + population[parent2_index][crossover_point:]
-                else:
-                    child = population[parent1_index]
-                # Adaptive mutation rate
-                mutation_rate = max(
-                    mutation_rate_min, min(mutation_rate_max, mutation_rate_max - (generation / opt.evolve))
-                )
-                for j in range(len(hyp_GA)):
-                    if random.uniform(0, 1) < mutation_rate:
-                        child[j] += random.uniform(-0.1, 0.1)
-                        child[j] = min(max(child[j], gene_ranges[j][0]), gene_ranges[j][1])
-                next_generation.append(child)
-            # Replace the old population with the new generation
-            population = next_generation
-        # Print the best solution found
-        best_index = fitness_scores.index(max(fitness_scores))
-        best_individual = population[best_index]
-        print("Best solution found:", best_individual)
         # Plot results
         plot_evolve(evolve_csv)
         LOGGER.info(
@@ -888,93 +813,59 @@ def main(opt, callbacks=Callbacks()):
         )
 
 
-def generate_individual(input_ranges, individual_length):
+def run(**kwargs):
     """
-    Generate an individual with random hyperparameters within specified ranges.
+    Run the training process for a YOLOv3 model with the specified configurations.
 
     Args:
-        input_ranges (list[tuple[float, float]]): List of tuples where each tuple contains the lower and upper bounds
-            for the corresponding gene (hyperparameter).
-        individual_length (int): The number of genes (hyperparameters) in the individual.
+        data (str): Path to the dataset YAML file.
+        weights (str): Path to the pre-trained weights file or '' to train from scratch.
+        cfg (str): Path to the model configuration file.
+        hyp (str): Path to the hyperparameters YAML file.
+        epochs (int): Total number of training epochs.
+        batch_size (int): Total batch size across all GPUs.
+        imgsz (int): Image size for training and validation (in pixels).
+        rect (bool): Use rectangular training for better aspect ratio preservation.
+        resume (bool | str): Resume most recent training if True, or resume training from a specific checkpoint if a string.
+        nosave (bool): Only save the final checkpoint and not the intermediate ones.
+        noval (bool): Only validate model performance in the final epoch.
+        noautoanchor (bool): Disable automatic anchor generation.
+        noplots (bool): Do not save any plots.
+        evolve (int): Number of generations for hyperparameters evolution.
+        bucket (str): Google Cloud Storage bucket name for saving run artifacts.
+        cache (str | None): Cache images for faster training ('ram' or 'disk').
+        image_weights (bool): Use weighted image selection for training.
+        device (str): Device to use for training, e.g., '0' for first GPU or 'cpu' for CPU.
+        multi_scale (bool): Use multi-scale training.
+        single_cls (bool): Train a multi-class dataset as a single-class.
+        optimizer (str): Optimizer to use ('SGD', 'Adam', or 'AdamW').
+        sync_bn (bool): Use synchronized batch normalization (only in DDP mode).
+        workers (int): Maximum number of dataloader workers (per rank in DDP mode).
+        project (str): Location of the output directory.
+        name (str): Unique name for the run.
+        exist_ok (bool): Allow existing output directory.
+        quad (bool): Use quad dataloader.
+        cos_lr (bool): Use cosine learning rate scheduler.
+        label_smoothing (float): Label smoothing epsilon.
+        patience (int): EarlyStopping patience (epochs without improvement).
+        freeze (list[int]): List of layers to freeze, e.g., [0] to freeze only the first layer.
+        save_period (int): Save checkpoint every 'save_period' epochs (disabled if less than 1).
+        seed (int): Global training seed for reproducibility.
+        local_rank (int): For automatic DDP Multi-GPU argument parsing, do not modify.
 
     Returns:
-        list[float]: A list representing a generated individual with random gene values within the specified ranges.
+        None
 
     Example:
         ```python
-        input_ranges = [(0.01, 0.1), (0.1, 1.0), (0.9, 2.0)]
-        individual_length = 3
-        individual = generate_individual(input_ranges, individual_length)
-        print(individual)  # Output: [0.035, 0.678, 1.456] (example output)
-        ```
-
-    Note:
-        The individual returned will have a length equal to `individual_length`, with each gene value being a floating-point
-        number within its specified range in `input_ranges`.
-    """
-    individual = []
-    for i in range(individual_length):
-        lower_bound, upper_bound = input_ranges[i]
-        individual.append(random.uniform(lower_bound, upper_bound))
-    return individual
-
-
-def run(**kwargs):
-    """
-    Execute YOLOv5 training with specified options, allowing optional overrides through keyword arguments.
-
-    Args:
-        weights (str, optional): Path to initial weights. Defaults to ROOT / 'yolov5s.pt'.
-        cfg (str, optional): Path to model YAML configuration. Defaults to an empty string.
-        data (str, optional): Path to dataset YAML configuration. Defaults to ROOT / 'data/coco128.yaml'.
-        hyp (str, optional): Path to hyperparameters YAML configuration. Defaults to ROOT / 'data/hyps/hyp.scratch-low.yaml'.
-        epochs (int, optional): Total number of training epochs. Defaults to 100.
-        batch_size (int, optional): Total batch size for all GPUs. Use -1 for automatic batch size determination. Defaults to 16.
-        imgsz (int, optional): Image size (pixels) for training and validation. Defaults to 640.
-        rect (bool, optional): Use rectangular training. Defaults to False.
-        resume (bool | str, optional): Resume most recent training with an optional path. Defaults to False.
-        nosave (bool, optional): Only save the final checkpoint. Defaults to False.
-        noval (bool, optional): Only validate at the final epoch. Defaults to False.
-        noautoanchor (bool, optional): Disable AutoAnchor. Defaults to False.
-        noplots (bool, optional): Do not save plot files. Defaults to False.
-        evolve (int, optional): Evolve hyperparameters for a specified number of generations. Use 300 if provided without a
-            value.
-        evolve_population (str, optional): Directory for loading population during evolution. Defaults to ROOT / 'data/ hyps'.
-        resume_evolve (str, optional): Resume hyperparameter evolution from the last generation. Defaults to None.
-        bucket (str, optional): gsutil bucket for saving checkpoints. Defaults to an empty string.
-        cache (str, optional): Cache image data in 'ram' or 'disk'. Defaults to None.
-        image_weights (bool, optional): Use weighted image selection for training. Defaults to False.
-        device (str, optional): CUDA device identifier, e.g., '0', '0,1,2,3', or 'cpu'. Defaults to an empty string.
-        multi_scale (bool, optional): Use multi-scale training, varying image size by ±50%. Defaults to False.
-        single_cls (bool, optional): Train with multi-class data as single-class. Defaults to False.
-        optimizer (str, optional): Optimizer type, choices are ['SGD', 'Adam', 'AdamW']. Defaults to 'SGD'.
-        sync_bn (bool, optional): Use synchronized BatchNorm, only available in DDP mode. Defaults to False.
-        workers (int, optional): Maximum dataloader workers per rank in DDP mode. Defaults to 8.
-        project (str, optional): Directory for saving training runs. Defaults to ROOT / 'runs/train'.
-        name (str, optional): Name for saving the training run. Defaults to 'exp'.
-        exist_ok (bool, optional): Allow existing project/name without incrementing. Defaults to False.
-        quad (bool, optional): Use quad dataloader. Defaults to False.
-        cos_lr (bool, optional): Use cosine learning rate scheduler. Defaults to False.
-        label_smoothing (float, optional): Label smoothing epsilon value. Defaults to 0.0.
-        patience (int, optional): Patience for early stopping, measured in epochs without improvement. Defaults to 100.
-        freeze (list, optional): Layers to freeze, e.g., backbone=10, first 3 layers = [0, 1, 2]. Defaults to [0].
-        save_period (int, optional): Frequency in epochs to save checkpoints. Disabled if < 1. Defaults to -1.
-        seed (int, optional): Global training random seed. Defaults to 0.
-        local_rank (int, optional): Automatic DDP Multi-GPU argument. Do not modify. Defaults to -1.
-
-    Returns:
-        None: The function initiates YOLOv5 training or hyperparameter evolution based on the provided options.
-
-    Examples:
-        ```python
-        import train
-        train.run(data='coco128.yaml', imgsz=320, weights='yolov5m.pt')
+        from ultralytics import run
+        run(data='coco128.yaml', weights='yolov5m.pt', imgsz=320, epochs=100, batch_size=16)
         ```
 
     Notes:
-        - Models: https://github.com/ultralytics/yolov5/tree/master/models
-        - Datasets: https://github.com/ultralytics/yolov5/tree/master/data
-        - Tutorial: https://docs.ultralytics.com/yolov5/tutorials/train_custom_data
+        - Ensure the dataset YAML file and initial weights are accessible.
+        - Refer to the [Ultralytics YOLOv5 repository](https://github.com/ultralytics/yolov5) for model and data configurations.
+        - Use the [Training Tutorial](https://docs.ultralytics.com/yolov5/tutorials/train_custom_data/) for custom dataset training.
     """
     opt = parse_opt(True)
     for k, v in kwargs.items():

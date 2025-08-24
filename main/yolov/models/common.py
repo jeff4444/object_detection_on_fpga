@@ -21,18 +21,6 @@ import torch
 import torch.nn as nn
 from PIL import Image
 from torch.cuda import amp
-
-# Import 'ultralytics' package or install if missing
-try:
-    import ultralytics
-
-    assert hasattr(ultralytics, "__version__")  # verify package is not directory
-except (ImportError, AssertionError):
-    import os
-
-    os.system("pip install -U ultralytics")
-    import ultralytics
-
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
 
 from utils import TryExcept
@@ -57,12 +45,8 @@ from utils.general import (
 from utils.torch_utils import copy_attr, smart_inference_mode
 
 
-def autopad(k, p=None, d=1):
-    """
-    Pads kernel to 'same' output shape, adjusting for optional dilation; returns padding size.
-
-    `k`: kernel, `p`: padding, `d`: dilation.
-    """
+def autopad(k, p=None, d=1):  # kernel, padding, dilation
+    """Automatically calculates same shape padding for convolutional layers, optionally adjusts for dilation."""
     if d > 1:
         k = d * (k - 1) + 1 if isinstance(k, int) else [d * (x - 1) + 1 for x in k]  # actual kernel-size
     if p is None:
@@ -71,54 +55,58 @@ def autopad(k, p=None, d=1):
 
 
 class Conv(nn.Module):
-    """Applies a convolution, batch normalization, and activation function to an input tensor in a neural network."""
+    """A standard Conv2D layer with batch normalization and optional activation for neural networks."""
 
-    default_act = nn.LeakyReLU(26/256, inplace=True)  # default activation
+    default_act = nn.LeakyReLU(0.1, inplace=True)  # default activation
 
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
-        """Initializes a standard convolution layer with optional batch normalization and activation."""
+        """Initializes a standard Conv2D layer with batch normalization and optional activation; args are channel_in,
+        channel_out, kernel_size, stride, padding, groups, dilation, and activation.
+        """
         super().__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
         self.bn = nn.BatchNorm2d(c2)
         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
 
     def forward(self, x):
-        """Applies a convolution followed by batch normalization and an activation function to the input tensor `x`."""
+        """Applies convolution, batch normalization, and activation to input `x`; `x` shape: [N, C_in, H, W] -> [N,
+        C_out, H_out, W_out].
+        """
         return self.act(self.bn(self.conv(x)))
 
     def forward_fuse(self, x):
-        """Applies a fused convolution and activation function to the input tensor `x`."""
+        """Applies fused convolution and activation to input `x`; input shape: [N, C_in, H, W] -> [N, C_out, H_out,
+        W_out].
+        """
         return self.act(self.conv(x))
 
 
 class DWConv(Conv):
-    """Implements a depth-wise convolution layer with optional activation for efficient spatial filtering."""
+    """Implements depth-wise convolution for efficient spatial feature extraction in neural networks."""
 
-    def __init__(self, c1, c2, k=1, s=1, d=1, act=True):
-        """Initializes a depth-wise convolution layer with optional activation; args: input channels (c1), output
-        channels (c2), kernel size (k), stride (s), dilation (d), and activation flag (act).
+    def __init__(self, c1, c2, k=1, s=1, d=1, act=True):  # ch_in, ch_out, kernel, stride, dilation, activation
+        """Initializes depth-wise convolution with optional activation; parameters are channel in/out, kernel, stride,
+        dilation.
         """
         super().__init__(c1, c2, k, s, g=math.gcd(c1, c2), d=d, act=act)
 
 
 class DWConvTranspose2d(nn.ConvTranspose2d):
-    """A depth-wise transpose convolutional layer for upsampling in neural networks, particularly in YOLOv5 models."""
+    """Implements a depth-wise transpose convolution layer with specified channels, kernel size, stride, and padding."""
 
-    def __init__(self, c1, c2, k=1, s=1, p1=0, p2=0):
-        """Initializes a depth-wise transpose convolutional layer for YOLOv5; args: input channels (c1), output channels
-        (c2), kernel size (k), stride (s), input padding (p1), output padding (p2).
+    def __init__(self, c1, c2, k=1, s=1, p1=0, p2=0):  # ch_in, ch_out, kernel, stride, padding, padding_out
+        """Initializes a depth-wise or transpose convolution layer with specified in/out channels, kernel size, stride,
+        and padding.
         """
         super().__init__(c1, c2, k, s, p1, p2, groups=math.gcd(c1, c2))
 
 
 class TransformerLayer(nn.Module):
-    """Transformer layer with multihead attention and linear layers, optimized by removing LayerNorm."""
+    """Transformer layer with multi-head attention and feed-forward network, optimized by removing LayerNorm."""
 
     def __init__(self, c, num_heads):
-        """
-        Initializes a transformer layer, sans LayerNorm for performance, with multihead attention and linear layers.
-
-        See  as described in https://arxiv.org/abs/2010.11929.
+        """Initializes a Transformer layer as per https://arxiv.org/abs/2010.11929, sans LayerNorm, with specified
+        embedding dimension and number of heads.
         """
         super().__init__()
         self.q = nn.Linear(c, c, bias=False)
@@ -129,19 +117,19 @@ class TransformerLayer(nn.Module):
         self.fc2 = nn.Linear(c, c, bias=False)
 
     def forward(self, x):
-        """Performs forward pass using MultiheadAttention and two linear transformations with residual connections."""
+        """Performs forward pass with multi-head attention and residual connections on input tensor 'x' [batch, seq_len,
+        features].
+        """
         x = self.ma(self.q(x), self.k(x), self.v(x))[0] + x
         x = self.fc2(self.fc1(x)) + x
         return x
 
 
 class TransformerBlock(nn.Module):
-    """A Transformer block for vision tasks with convolution, position embeddings, and Transformer layers."""
+    """Implements a Vision Transformer block with transformer layers; https://arxiv.org/abs/2010.11929."""
 
     def __init__(self, c1, c2, num_heads, num_layers):
-        """Initializes a Transformer block for vision tasks, adapting dimensions if necessary and stacking specified
-        layers.
-        """
+        """Initializes a Transformer block with optional convolution, linear, and transformer layers."""
         super().__init__()
         self.conv = None
         if c1 != c2:
@@ -151,9 +139,7 @@ class TransformerBlock(nn.Module):
         self.c2 = c2
 
     def forward(self, x):
-        """Processes input through an optional convolution, followed by Transformer layers and position embeddings for
-        object detection.
-        """
+        """Applies an optional convolution, transforms features, and reshapes output matching input dimensions."""
         if self.conv is not None:
             x = self.conv(x)
         b, _, w, h = x.shape
@@ -162,11 +148,11 @@ class TransformerBlock(nn.Module):
 
 
 class Bottleneck(nn.Module):
-    """A bottleneck layer with optional shortcut and group convolution for efficient feature extraction."""
+    """Implements a bottleneck layer with optional shortcut for efficient feature extraction in neural networks."""
 
-    def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):
-        """Initializes a standard bottleneck layer with optional shortcut and group convolution, supporting channel
-        expansion.
+    def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
+        """Initializes a standard bottleneck layer with optional shortcut; args: input channels (c1), output channels
+        (c2), shortcut (bool), groups (g), expansion factor (e).
         """
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
@@ -175,18 +161,18 @@ class Bottleneck(nn.Module):
         self.add = shortcut and c1 == c2
 
     def forward(self, x):
-        """Processes input through two convolutions, optionally adds shortcut if channel dimensions match; input is a
-        tensor.
+        """Executes forward pass, performing convolutional ops and optional shortcut addition; expects input tensor
+        x.
         """
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
 
 class BottleneckCSP(nn.Module):
-    """CSP bottleneck layer for feature extraction with cross-stage partial connections and optional shortcuts."""
+    """Implements a CSP Bottleneck layer for feature extraction."""
 
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
-        """Initializes CSP bottleneck with optional shortcuts; args: ch_in, ch_out, number of repeats, shortcut bool,
-        groups, expansion.
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+        """Initializes CSP Bottleneck with channel in/out, optional shortcut, groups, expansion; see
+        https://github.com/WongKinYiu/CrossStagePartialNetworks.
         """
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
@@ -195,12 +181,12 @@ class BottleneckCSP(nn.Module):
         self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
         self.cv4 = Conv(2 * c_, c2, 1, 1)
         self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
-        self.act = nn.LeakyReLU(26/256, inplace=True)
+        self.act = nn.LeakyRelu(0.1, inplace=True)
         self.m = nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
 
     def forward(self, x):
-        """Performs forward pass by applying layers, activation, and concatenation on input x, returning feature-
-        enhanced output.
+        """Processes input through layers, combining outputs with activation and normalization for feature
+        extraction.
         """
         y1 = self.cv3(self.m(self.cv1(x)))
         y2 = self.cv2(x)
@@ -208,14 +194,11 @@ class BottleneckCSP(nn.Module):
 
 
 class CrossConv(nn.Module):
-    """Implements a cross convolution layer with downsampling, expansion, and optional shortcut."""
+    """Implements Cross Convolution Downsample with 1D and 2D convolutions and optional shortcut."""
 
     def __init__(self, c1, c2, k=3, s=1, g=1, e=1.0, shortcut=False):
-        """
-        Initializes CrossConv with downsampling, expanding, and optionally shortcutting; `c1` input, `c2` output
-        channels.
-
-        Inputs are ch_in, ch_out, kernel, stride, groups, expansion, shortcut.
+        """Initializes CrossConv with downsample options, combining 1D and 2D convolutions, optional shortcut if
+        input/output channels match.
         """
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
@@ -224,16 +207,16 @@ class CrossConv(nn.Module):
         self.add = shortcut and c1 == c2
 
     def forward(self, x):
-        """Performs feature sampling, expanding, and applies shortcut if channels match; expects `x` input tensor."""
+        """Performs forward pass using sequential 1D and 2D convolutions with optional shortcut addition."""
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
 
 class C3(nn.Module):
-    """Implements a CSP Bottleneck module with three convolutions for enhanced feature extraction in neural networks."""
+    """Implements a CSP Bottleneck with 3 convolutions, optional shortcuts, group convolutions, and expansion factor."""
 
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
-        """Initializes C3 module with options for channel count, bottleneck repetition, shortcut usage, group
-        convolutions, and expansion.
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+        """Initializes CSP Bottleneck with 3 convolutions, optional shortcuts, group convolutions, and expansion
+        factor.
         """
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
@@ -243,61 +226,59 @@ class C3(nn.Module):
         self.m = nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
 
     def forward(self, x):
-        """Performs forward propagation using concatenated outputs from two convolutions and a Bottleneck sequence."""
+        """Processes input tensor `x` through convolutions and bottlenecks, returning the concatenated output tensor."""
         return self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), 1))
 
 
 class C3x(C3):
-    """Extends the C3 module with cross-convolutions for enhanced feature extraction in neural networks."""
+    """Extends the C3 module with cross-convolutions for enhanced feature extraction and flexibility."""
 
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
-        """Initializes C3x module with cross-convolutions, extending C3 with customizable channel dimensions, groups,
-        and expansion.
-        """
+        """Initializes a C3x module with cross-convolutions, extending the C3 module with customizable parameters."""
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2 * e)
         self.m = nn.Sequential(*(CrossConv(c_, c_, 3, 1, g, 1.0, shortcut) for _ in range(n)))
 
 
 class C3TR(C3):
-    """C3 module with TransformerBlock for enhanced feature extraction in object detection models."""
+    """C3 module with TransformerBlock for integrating attention mechanisms in CNNs."""
 
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
-        """Initializes C3 module with TransformerBlock for enhanced feature extraction, accepts channel sizes, shortcut
-        config, group, and expansion.
-        """
+        """Initializes a C3 module with TransformerBlock, extending C3 for attention mechanisms."""
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2 * e)
         self.m = TransformerBlock(c_, c_, 4, n)
 
 
 class C3SPP(C3):
-    """Extends the C3 module with an SPP layer for enhanced spatial feature extraction and customizable channels."""
+    """Extends C3 with Spatial Pyramid Pooling (SPP) for enhanced feature extraction in CNNs."""
 
     def __init__(self, c1, c2, k=(5, 9, 13), n=1, shortcut=True, g=1, e=0.5):
-        """Initializes a C3 module with SPP layer for advanced spatial feature extraction, given channel sizes, kernel
-        sizes, shortcut, group, and expansion ratio.
-        """
+        """Initializes C3SPP module, extending C3 with Spatial Pyramid Pooling for enhanced feature extraction."""
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2 * e)
         self.m = SPP(c_, c_, k)
 
 
 class C3Ghost(C3):
-    """Implements a C3 module with Ghost Bottlenecks for efficient feature extraction in YOLOv5."""
+    """Implements a C3 module with Ghost Bottlenecks for efficient feature extraction in neural networks."""
 
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
-        """Initializes YOLOv5's C3 module with Ghost Bottlenecks for efficient feature extraction."""
+        """Initializes C3Ghost module with Ghost Bottlenecks for efficient feature extraction."""
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2 * e)  # hidden channels
         self.m = nn.Sequential(*(GhostBottleneck(c_, c_) for _ in range(n)))
 
 
 class SPP(nn.Module):
-    """Implements Spatial Pyramid Pooling (SPP) for feature extraction, ref: https://arxiv.org/abs/1406.4729."""
+    """Implements Spatial Pyramid Pooling (SPP) for enhanced feature extraction; see https://arxiv.org/abs/1406.4729."""
 
     def __init__(self, c1, c2, k=(5, 9, 13)):
-        """Initializes SPP layer with Spatial Pyramid Pooling, ref: https://arxiv.org/abs/1406.4729, args: c1 (input channels), c2 (output channels), k (kernel sizes)."""
+        """
+        Initializes SPP layer with specified channels and kernels.
+
+        More at https://arxiv.org/abs/1406.4729
+        """
         super().__init__()
         c_ = c1 // 2  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
@@ -305,8 +286,10 @@ class SPP(nn.Module):
         self.m = nn.ModuleList([nn.MaxPool2d(kernel_size=x, stride=1, padding=x // 2) for x in k])
 
     def forward(self, x):
-        """Applies convolution and max pooling layers to the input tensor `x`, concatenates results, and returns output
-        tensor.
+        """
+        Applies convolution and max pooling layers to the input tensor `x`, concatenates results for feature extraction.
+
+        `x` is a tensor of shape [N, C, H, W]. See https://arxiv.org/abs/1406.4729 for more details.
         """
         x = self.cv1(x)
         with warnings.catch_warnings():
@@ -315,15 +298,10 @@ class SPP(nn.Module):
 
 
 class SPPF(nn.Module):
-    """Implements a fast Spatial Pyramid Pooling (SPPF) layer for efficient feature extraction in YOLOv5 models."""
+    """Implements a fast Spatial Pyramid Pooling (SPPF) layer for efficient feature extraction in YOLOv3 models."""
 
-    def __init__(self, c1, c2, k=5):
-        """
-        Initializes YOLOv5 SPPF layer with given channels and kernel size for YOLOv5 model, combining convolution and
-        max pooling.
-
-        Equivalent to SPP(k=(5, 9, 13)).
-        """
+    def __init__(self, c1, c2, k=5):  # equivalent to SPP(k=(5, 9, 13))
+        """Initializes the SPPF layer with specified input/output channels and kernel size for YOLOv3."""
         super().__init__()
         c_ = c1 // 2  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
@@ -331,7 +309,9 @@ class SPPF(nn.Module):
         self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
 
     def forward(self, x):
-        """Processes input through a series of convolutions and max pooling operations for feature extraction."""
+        """Performs forward pass combining convolutions and max pooling on input `x` of shape [N, C, H, W] to produce
+        feature map.
+        """
         x = self.cv1(x)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # suppress torch 1.9.0 max_pool2d() warning
@@ -341,28 +321,28 @@ class SPPF(nn.Module):
 
 
 class Focus(nn.Module):
-    """Focuses spatial information into channel space using slicing and convolution for efficient feature extraction."""
+    """Focuses spatial information into channel space using configurable convolution."""
 
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):
-        """Initializes Focus module to concentrate width-height info into channel space with configurable convolution
-        parameters.
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
+        """Initializes Focus module to focus width and height information into channel space with configurable
+        convolution parameters.
         """
         super().__init__()
         self.conv = Conv(c1 * 4, c2, k, s, p, g, act=act)
         # self.contract = Contract(gain=2)
 
-    def forward(self, x):
-        """Processes input through Focus mechanism, reshaping (b,c,w,h) to (b,4c,w/2,h/2) then applies convolution."""
+    def forward(self, x):  # x(b,c,w,h) -> y(b,4c,w/2,h/2)
+        """Applies focused downsampling to input tensor, returning a convolved output with increased channel depth."""
         return self.conv(torch.cat((x[..., ::2, ::2], x[..., 1::2, ::2], x[..., ::2, 1::2], x[..., 1::2, 1::2]), 1))
         # return self.conv(self.contract(x))
 
 
 class GhostConv(nn.Module):
-    """Implements Ghost Convolution for efficient feature extraction, see https://github.com/huawei-noah/ghostnet."""
+    """Implements Ghost Convolution for efficient feature extraction; see github.com/huawei-noah/ghostnet."""
 
-    def __init__(self, c1, c2, k=1, s=1, g=1, act=True):
-        """Initializes GhostConv with in/out channels, kernel size, stride, groups, and activation; halves out channels
-        for efficiency.
+    def __init__(self, c1, c2, k=1, s=1, g=1, act=True):  # ch_in, ch_out, kernel, stride, groups
+        """Initializes GhostConv with in/out channels, kernel size, stride, groups; see
+        https://github.com/huawei-noah/ghostnet.
         """
         super().__init__()
         c_ = c2 // 2  # hidden channels
@@ -370,16 +350,18 @@ class GhostConv(nn.Module):
         self.cv2 = Conv(c_, c_, 5, 1, None, c_, act=act)
 
     def forward(self, x):
-        """Performs forward pass, concatenating outputs of two convolutions on input `x`: shape (B,C,H,W)."""
+        """Executes forward pass, applying convolutions and concatenating results; input `x` is a tensor."""
         y = self.cv1(x)
         return torch.cat((y, self.cv2(y)), 1)
 
 
 class GhostBottleneck(nn.Module):
-    """Efficient bottleneck layer using Ghost Convolutions, see https://github.com/huawei-noah/ghostnet."""
+    """Implements a Ghost Bottleneck layer for efficient feature extraction from GhostNet."""
 
-    def __init__(self, c1, c2, k=3, s=1):
-        """Initializes GhostBottleneck with ch_in `c1`, ch_out `c2`, kernel size `k`, stride `s`; see https://github.com/huawei-noah/ghostnet."""
+    def __init__(self, c1, c2, k=3, s=1):  # ch_in, ch_out, kernel, stride
+        """Initializes GhostBottleneck module with in/out channels, kernel size, and stride; see
+        https://github.com/huawei-noah/ghostnet.
+        """
         super().__init__()
         c_ = c2 // 2
         self.conv = nn.Sequential(
@@ -392,23 +374,23 @@ class GhostBottleneck(nn.Module):
         )
 
     def forward(self, x):
-        """Processes input through conv and shortcut layers, returning their summed output."""
+        """Performs a forward pass through the network, returning the sum of convolution and shortcut outputs."""
         return self.conv(x) + self.shortcut(x)
 
 
 class Contract(nn.Module):
-    """Contracts spatial dimensions into channel dimensions for efficient processing in neural networks."""
+    """Contracts spatial dimensions into channels, e.g., (1,64,80,80) to (1,256,40,40) with a specified gain."""
 
     def __init__(self, gain=2):
-        """Initializes a layer to contract spatial dimensions (width-height) into channels, e.g., input shape
-        (1,64,80,80) to (1,256,40,40).
+        """Initializes Contract module to refine input dimensions, e.g., from (1,64,80,80) to (1,256,40,40) with a
+        default gain of 2.
         """
         super().__init__()
         self.gain = gain
 
     def forward(self, x):
-        """Processes input tensor to expand channel dimensions by contracting spatial dimensions, yielding output shape
-        `(b, c*s*s, h//s, w//s)`.
+        """Processes input tensor (b,c,h,w) to contracted shape (b,c*s^2,h/s,w/s) with default gain s=2, e.g.,
+        (1,64,80,80) to (1,256,40,40).
         """
         b, c, h, w = x.size()  # assert (h / s == 0) and (W / s == 0), 'Indivisible gain'
         s = self.gain
@@ -418,21 +400,18 @@ class Contract(nn.Module):
 
 
 class Expand(nn.Module):
-    """Expands spatial dimensions by redistributing channels, e.g., from (1,64,80,80) to (1,16,160,160)."""
+    """Expands spatial dimensions of input tensor by a factor while reducing channels correspondingly."""
 
     def __init__(self, gain=2):
-        """
-        Initializes the Expand module to increase spatial dimensions by redistributing channels, with an optional gain
-        factor.
-
-        Example: x(1,64,80,80) to x(1,16,160,160).
+        """Initializes Expand module to increase spatial dimensions by factor `gain` while reducing channels
+        correspondingly.
         """
         super().__init__()
         self.gain = gain
 
     def forward(self, x):
-        """Processes input tensor x to expand spatial dimensions by redistributing channels, requiring C / gain^2 ==
-        0.
+        """Expands spatial dimensions of input tensor `x` by factor `gain` while reducing channels, transforming shape
+        `(B,C,H,W)` to `(B,C/gain^2,H*gain,W*gain)`.
         """
         b, c, h, w = x.size()  # assert C / s ** 2 == 0, 'Indivisible gain'
         s = self.gain
@@ -442,31 +421,33 @@ class Expand(nn.Module):
 
 
 class Concat(nn.Module):
-    """Concatenates tensors along a specified dimension for efficient tensor manipulation in neural networks."""
+    """Concatenates a list of tensors along a specified dimension for efficient feature aggregation."""
 
     def __init__(self, dimension=1):
-        """Initializes a Concat module to concatenate tensors along a specified dimension."""
+        """Initializes a module to concatenate tensors along a specified dimension."""
         super().__init__()
         self.d = dimension
 
     def forward(self, x):
-        """Concatenates a list of tensors along a specified dimension; `x` is a list of tensors, `dimension` is an
-        int.
+        """Concatenates a list of tensors along a specified dimension; x is a list of tensors to concatenate, dimension
+        defaults to 1.
         """
         return torch.cat(x, self.d)
 
 
 class DetectMultiBackend(nn.Module):
-    """YOLOv5 MultiBackend class for inference on various backends including PyTorch, ONNX, TensorRT, and more."""
+    """YOLOv3 multi-backend class for inference on frameworks like PyTorch, ONNX, TensorRT, and more."""
 
     def __init__(self, weights="yolov5s.pt", device=torch.device("cpu"), dnn=False, data=None, fp16=False, fuse=True):
-        """Initializes DetectMultiBackend with support for various inference backends, including PyTorch and ONNX."""
+        """Initializes multi-backend detection with options for various frameworks and devices, also handles model
+        download.
+        """
         #   PyTorch:              weights = *.pt
         #   TorchScript:                    *.torchscript
         #   ONNX Runtime:                   *.onnx
         #   ONNX OpenCV DNN:                *.onnx --dnn
         #   OpenVINO:                       *_openvino_model
-        #   CoreML:                         *.mlpackage
+        #   CoreML:                         *.mlmodel
         #   TensorRT:                       *.engine
         #   TensorFlow SavedModel:          *_saved_model
         #   TensorFlow GraphDef:            *.pb
@@ -549,34 +530,18 @@ class DetectMultiBackend(nn.Module):
             output_names = []
             fp16 = False  # default updated below
             dynamic = False
-            is_trt10 = not hasattr(model, "num_bindings")
-            num = range(model.num_io_tensors) if is_trt10 else range(model.num_bindings)
-            for i in num:
-                if is_trt10:
-                    name = model.get_tensor_name(i)
-                    dtype = trt.nptype(model.get_tensor_dtype(name))
-                    is_input = model.get_tensor_mode(name) == trt.TensorIOMode.INPUT
-                    if is_input:
-                        if -1 in tuple(model.get_tensor_shape(name)):  # dynamic
-                            dynamic = True
-                            context.set_input_shape(name, tuple(model.get_profile_shape(name, 0)[2]))
-                        if dtype == np.float16:
-                            fp16 = True
-                    else:  # output
-                        output_names.append(name)
-                    shape = tuple(context.get_tensor_shape(name))
-                else:
-                    name = model.get_binding_name(i)
-                    dtype = trt.nptype(model.get_binding_dtype(i))
-                    if model.binding_is_input(i):
-                        if -1 in tuple(model.get_binding_shape(i)):  # dynamic
-                            dynamic = True
-                            context.set_binding_shape(i, tuple(model.get_profile_shape(0, i)[2]))
-                        if dtype == np.float16:
-                            fp16 = True
-                    else:  # output
-                        output_names.append(name)
-                    shape = tuple(context.get_binding_shape(i))
+            for i in range(model.num_bindings):
+                name = model.get_binding_name(i)
+                dtype = trt.nptype(model.get_binding_dtype(i))
+                if model.binding_is_input(i):
+                    if -1 in tuple(model.get_binding_shape(i)):  # dynamic
+                        dynamic = True
+                        context.set_binding_shape(i, tuple(model.get_profile_shape(0, i)[2]))
+                    if dtype == np.float16:
+                        fp16 = True
+                else:  # output
+                    output_names.append(name)
+                shape = tuple(context.get_binding_shape(i))
                 im = torch.from_numpy(np.empty(shape, dtype=dtype)).to(device)
                 bindings[name] = Binding(name, dtype, shape, im, int(im.data_ptr()))
             binding_addrs = OrderedDict((n, d.ptr) for n, d in bindings.items())
@@ -597,13 +562,17 @@ class DetectMultiBackend(nn.Module):
             import tensorflow as tf
 
             def wrap_frozen_graph(gd, inputs, outputs):
-                """Wraps a TensorFlow GraphDef for inference, returning a pruned function."""
+                """Wraps a frozen TensorFlow GraphDef for inference, returning a pruned function for specified inputs
+                and outputs.
+                """
                 x = tf.compat.v1.wrap_function(lambda: tf.compat.v1.import_graph_def(gd, name=""), [])  # wrapped
                 ge = x.graph.as_graph_element
                 return x.prune(tf.nest.map_structure(ge, inputs), tf.nest.map_structure(ge, outputs))
 
             def gd_outputs(gd):
-                """Generates a sorted list of graph outputs excluding NoOp nodes and inputs, formatted as '<name>:0'."""
+                """Extracts and sorts non-input (output) tensor names from a TensorFlow GraphDef, excluding 'NoOp'
+                prefixed tensors.
+                """
                 name_list, input_list = [], []
                 for node in gd.node:  # tensorflow.core.framework.node_def_pb2.NodeDef
                     name_list.append(node.name)
@@ -643,33 +612,21 @@ class DetectMultiBackend(nn.Module):
                     meta = ast.literal_eval(model.read(meta_file).decode("utf-8"))
                     stride, names = int(meta["stride"]), meta["names"]
         elif tfjs:  # TF.js
-            raise NotImplementedError("ERROR: YOLOv5 TF.js inference is not supported")
-        # PaddlePaddle
-        elif paddle:
+            raise NotImplementedError("ERROR: YOLOv3 TF.js inference is not supported")
+        elif paddle:  # PaddlePaddle
             LOGGER.info(f"Loading {w} for PaddlePaddle inference...")
-            check_requirements("paddlepaddle-gpu" if cuda else "paddlepaddle>=3.0.0")
+            check_requirements("paddlepaddle-gpu" if cuda else "paddlepaddle")
             import paddle.inference as pdi
 
-            w = Path(w)
-            if w.is_dir():
-                model_file = next(w.rglob("*.json"), None)
-                params_file = next(w.rglob("*.pdiparams"), None)
-            elif w.suffix == ".pdiparams":
-                model_file = w.with_name("model.json")
-                params_file = w
-            else:
-                raise ValueError(f"Invalid model path {w}. Provide model directory or a .pdiparams file.")
-
-            if not (model_file and params_file and model_file.is_file() and params_file.is_file()):
-                raise FileNotFoundError(f"Model files not found in {w}. Both .json and .pdiparams files are required.")
-
-            config = pdi.Config(str(model_file), str(params_file))
+            if not Path(w).is_file():  # if not *.pdmodel
+                w = next(Path(w).rglob("*.pdmodel"))  # get *.pdmodel file from *_paddle_model dir
+            weights = Path(w).with_suffix(".pdiparams")
+            config = pdi.Config(str(w), str(weights))
             if cuda:
                 config.enable_use_gpu(memory_pool_init_size_mb=2048, device_id=0)
             predictor = pdi.create_predictor(config)
             input_handle = predictor.get_input_handle(predictor.get_input_names()[0])
             output_names = predictor.get_output_names()
-
         elif triton:  # NVIDIA Triton Inference Server
             LOGGER.info(f"Using {w} as Triton Inference Server...")
             check_requirements("tritonclient[all]")
@@ -689,7 +646,7 @@ class DetectMultiBackend(nn.Module):
         self.__dict__.update(locals())  # assign all variables to self
 
     def forward(self, im, augment=False, visualize=False):
-        """Performs YOLOv5 inference on input images with options for augmentation and visualization."""
+        """Performs YOLOv3 inference on an input image tensor, optionally with augmentation and visualization."""
         b, ch, h, w = im.shape  # batch, channel, height, width
         if self.fp16 and im.dtype != torch.float16:
             im = im.half()  # to FP16
@@ -762,8 +719,6 @@ class DetectMultiBackend(nn.Module):
                         scale, zero_point = output["quantization"]
                         x = (x.astype(np.float32) - zero_point) * scale  # re-scale
                     y.append(x)
-            if len(y) == 2 and len(y[1].shape) != 4:
-                y = list(reversed(y))
             y = [x if isinstance(x, np.ndarray) else x.numpy() for x in y]
             y[0][..., :4] *= [w, h, w, h]  # xywh normalized to pixels
 
@@ -773,11 +728,13 @@ class DetectMultiBackend(nn.Module):
             return self.from_numpy(y)
 
     def from_numpy(self, x):
-        """Converts a NumPy array to a torch tensor, maintaining device compatibility."""
+        """Converts a Numpy array to a PyTorch tensor on the specified device, else returns the input if not a Numpy
+        array.
+        """
         return torch.from_numpy(x).to(self.device) if isinstance(x, np.ndarray) else x
 
     def warmup(self, imgsz=(1, 3, 640, 640)):
-        """Performs a single inference warmup to initialize model weights, accepting an `imgsz` tuple for image size."""
+        """Warms up the model by running inference once with a dummy input of shape imgsz."""
         warmup_types = self.pt, self.jit, self.onnx, self.engine, self.saved_model, self.pb, self.triton
         if any(warmup_types) and (self.device.type != "cpu" or self.triton):
             im = torch.empty(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
@@ -787,9 +744,9 @@ class DetectMultiBackend(nn.Module):
     @staticmethod
     def _model_type(p="path/to/model.pt"):
         """
-        Determines model type from file path or URL, supporting various export formats.
+        Determines model type from filepath or URL, supports various formats including ONNX, PT, JIT.
 
-        Example: path='path/to/model.onnx' -> type=onnx
+        See `export_formats` for all.
         """
         # types = [pt, jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs, paddle]
         from export import export_formats
@@ -806,7 +763,7 @@ class DetectMultiBackend(nn.Module):
 
     @staticmethod
     def _load_metadata(f=Path("path/to/meta.yaml")):
-        """Loads metadata from a YAML file, returning strides and names if the file exists, otherwise `None`."""
+        """Loads metadata from a YAML file, returning 'stride' and 'names' if the file exists, else 'None'."""
         if f.exists():
             d = yaml_load(f)
             return d["stride"], d["names"]  # assign stride, names
@@ -814,7 +771,7 @@ class DetectMultiBackend(nn.Module):
 
 
 class AutoShape(nn.Module):
-    """AutoShape class for robust YOLOv5 inference with preprocessing, NMS, and support for various input formats."""
+    """A wrapper for YOLOv3 models to handle diverse input types with preprocessing, inference, and NMS."""
 
     conf = 0.25  # NMS confidence threshold
     iou = 0.45  # NMS IoU threshold
@@ -825,7 +782,9 @@ class AutoShape(nn.Module):
     amp = False  # Automatic Mixed Precision (AMP) inference
 
     def __init__(self, model, verbose=True):
-        """Initializes YOLOv5 model for inference, setting up attributes and preparing model for evaluation."""
+        """Initializes the model for inference, setting attributes, and preparing for multithreaded execution with
+        optional verbose logging.
+        """
         super().__init__()
         if verbose:
             LOGGER.info("Adding AutoShape... ")
@@ -839,10 +798,8 @@ class AutoShape(nn.Module):
             m.export = True  # do not output loss values
 
     def _apply(self, fn):
-        """
-        Applies to(), cpu(), cuda(), half() etc.
-
-        to model tensors excluding parameters or registered buffers.
+        """Applies given function `fn` to model tensors excluding parameters or registered buffers, adjusting strides
+        and grids.
         """
         self = super()._apply(fn)
         if self.pt:
@@ -855,12 +812,9 @@ class AutoShape(nn.Module):
 
     @smart_inference_mode()
     def forward(self, ims, size=640, augment=False, profile=False):
+        """Performs inference on various input sources with optional augmentation and profiling; see
+        `https://ultralytics.com`.
         """
-        Performs inference on inputs with optional augment & profiling.
-
-        Supports various formats including file, URI, OpenCV, PIL, numpy, torch.
-        """
-        # For size(height=640, width=1280), RGB images example inputs are:
         #   file:        ims = 'data/images/zidane.jpg'  # str or PosixPath
         #   URI:             = 'https://ultralytics.com/images/zidane.jpg'
         #   OpenCV:          = cv2.imread('image.jpg')[:,:,::-1]  # HWC BGR to RGB x(640,1280,3)
@@ -926,10 +880,12 @@ class AutoShape(nn.Module):
 
 
 class Detections:
-    """Manages YOLOv5 detection results with methods for visualization, saving, cropping, and exporting detections."""
+    """Handles YOLOv3 detection results with methods for visualization, saving, cropping, and format conversion."""
 
     def __init__(self, ims, pred, files, times=(0, 0, 0), names=None, shape=None):
-        """Initializes the YOLOv5 Detections class with image info, predictions, filenames, timing and normalization."""
+        """Initializes YOLOv3 detections with image data, predictions, filenames, profiling times, class names, and
+        shapes.
+        """
         super().__init__()
         d = pred[0].device  # device
         gn = [torch.tensor([*(im.shape[i] for i in [1, 0, 1, 0]), 1, 1], device=d) for im in ims]  # normalizations
@@ -947,7 +903,7 @@ class Detections:
         self.s = tuple(shape)  # inference BCHW shape
 
     def _run(self, pprint=False, show=False, save=False, crop=False, render=False, labels=True, save_dir=Path("")):
-        """Executes model predictions, displaying and/or saving outputs with optional crops and labels."""
+        """Executes inference on images, annotates detections, and can optionally show, save, or crop output images."""
         s, crops = "", []
         for i, (im, pred) in enumerate(zip(self.ims, self.pred)):
             s += f"\nimage {i + 1}/{len(self.pred)}: {im.shape[0]}x{im.shape[1]} "  # string
@@ -1003,41 +959,41 @@ class Detections:
     @TryExcept("Showing images is not supported in this environment")
     def show(self, labels=True):
         """
-        Displays detection results with optional labels.
+        Displays image results with optional labels.
 
-        Usage: show(labels=True)
+        Usage: `show(labels=True)`
         """
         self._run(show=True, labels=labels)  # show results
 
     def save(self, labels=True, save_dir="runs/detect/exp", exist_ok=False):
         """
-        Saves detection results with optional labels to a specified directory.
+        Saves image results with optional labels to a specified directory.
 
-        Usage: save(labels=True, save_dir='runs/detect/exp', exist_ok=False)
+        Usage: `save(labels=True, save_dir='runs/detect/exp', exist_ok=False)`
         """
         save_dir = increment_path(save_dir, exist_ok, mkdir=True)  # increment save_dir
         self._run(save=True, labels=labels, save_dir=save_dir)  # save results
 
     def crop(self, save=True, save_dir="runs/detect/exp", exist_ok=False):
         """
-        Crops detection results, optionally saves them to a directory.
+        Crops detection results; can save to `save_dir`.
 
-        Args: save (bool), save_dir (str), exist_ok (bool).
+        Usage: `crop(save=True, save_dir='runs/detect/exp')`.
         """
         save_dir = increment_path(save_dir, exist_ok, mkdir=True) if save else None
         return self._run(crop=True, save=save, save_dir=save_dir)  # crop results
 
     def render(self, labels=True):
-        """Renders detection results with optional labels on images; args: labels (bool) indicating label inclusion."""
+        """
+        Renders detection results, optionally displaying labels.
+
+        Usage: `render(labels=True)`.
+        """
         self._run(render=True, labels=labels)  # render results
         return self.ims
 
     def pandas(self):
-        """
-        Returns detections as pandas DataFrames for various box formats (xyxy, xyxyn, xywh, xywhn).
-
-        Example: print(results.pandas().xyxy[0]).
-        """
+        """Returns a copy of the detection results as pandas DataFrames for various bounding box formats."""
         new = copy(self)  # return copy
         ca = "xmin", "ymin", "xmax", "ymax", "confidence", "class", "name"  # xyxy columns
         cb = "xcenter", "ycenter", "width", "height", "confidence", "class", "name"  # xywh columns
@@ -1047,11 +1003,7 @@ class Detections:
         return new
 
     def tolist(self):
-        """
-        Converts a Detections object into a list of individual detection results for iteration.
-
-        Example: for result in results.tolist():
-        """
+        """Converts Detections object to a list of individual Detection objects for iteration."""
         r = range(self.n)  # iterable
         return [
             Detections(
@@ -1066,29 +1018,27 @@ class Detections:
         ]
 
     def print(self):
-        """Logs the string representation of the current object's state via the LOGGER."""
+        """Logs the string representation of the current object state to the LOGGER."""
         LOGGER.info(self.__str__())
 
-    def __len__(self):
-        """Returns the number of results stored, overrides the default len(results)."""
+    def __len__(self):  # override len(results)
+        """Returns the number of results stored in the instance."""
         return self.n
 
-    def __str__(self):
-        """Returns a string representation of the model's results, suitable for printing, overrides default
-        print(results).
-        """
+    def __str__(self):  # override print(results)
+        """Returns a string representation of the current object state, printing the results."""
         return self._run(pprint=True)  # print results
 
     def __repr__(self):
-        """Returns a string representation of the YOLOv5 object, including its class and formatted results."""
-        return f"YOLOv5 {self.__class__} instance\n" + self.__str__()
+        """Returns a string representation for debugging, including class info and current object state."""
+        return f"YOLOv3 {self.__class__} instance\n" + self.__str__()
 
 
 class Proto(nn.Module):
-    """YOLOv5 mask Proto module for segmentation models, performing convolutions and upsampling on input tensors."""
+    """Implements the YOLOv3 mask Proto module for segmentation, including convolutional layers and upsampling."""
 
-    def __init__(self, c1, c_=256, c2=32):
-        """Initializes YOLOv5 Proto module for segmentation with input, proto, and mask channels configuration."""
+    def __init__(self, c1, c_=256, c2=32):  # ch_in, number of protos, number of masks
+        """Initializes the Proto module for YOLOv3 segmentation, setting up convolutional layers and upsampling."""
         super().__init__()
         self.cv1 = Conv(c1, c_, k=3)
         self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
@@ -1096,18 +1046,18 @@ class Proto(nn.Module):
         self.cv3 = Conv(c_, c2)
 
     def forward(self, x):
-        """Performs a forward pass using convolutional layers and upsampling on input tensor `x`."""
+        """Performs forward pass, upsampling and applying convolutions for YOLOv3 segmentation."""
         return self.cv3(self.cv2(self.upsample(self.cv1(x))))
 
 
 class Classify(nn.Module):
-    """YOLOv5 classification head with convolution, pooling, and dropout layers for channel transformation."""
+    """Performs image classification using YOLOv3-based architecture with convolutional, pooling, and dropout layers."""
 
     def __init__(
         self, c1, c2, k=1, s=1, p=None, g=1, dropout_p=0.0
     ):  # ch_in, ch_out, kernel, stride, padding, groups, dropout probability
-        """Initializes YOLOv5 classification head with convolution, pooling, and dropout layers for input to output
-        channel transformation.
+        """Initializes YOLOv3 classification head with convolution, pooling and dropout layers for feature extraction
+        and classification.
         """
         super().__init__()
         c_ = 1280  # efficientnet_b0 size
@@ -1117,7 +1067,9 @@ class Classify(nn.Module):
         self.linear = nn.Linear(c_, c2)  # to x(b,c2)
 
     def forward(self, x):
-        """Processes input through conv, pool, drop, and linear layers; supports list concatenation input."""
+        """Processes input tensor `x` through convolutions and pooling, optionally concatenating lists of tensors, and
+        returns linear output.
+        """
         if isinstance(x, list):
             x = torch.cat(x, 1)
         return self.linear(self.drop(self.pool(self.conv(x)).flatten(1)))
