@@ -1,0 +1,42 @@
+model {
+  name: "yolov3_quant"
+  kernel {
+     name: "yolov3_quant"
+     mean: 0.0
+     mean: 0.0
+     mean: 0.0
+     scale: 0.00390625
+     scale: 0.00390625
+     scale: 0.00390625
+  }
+  model_type : YOLOv3
+  yolo_v3_param {
+    num_classes: 6
+    anchorCnt: 3
+    layer_name: "81"
+    layer_name: "93"
+    layer_name: "105"
+    conf_threshold: 0.3
+    nms_threshold: 0.45
+    biases: 10
+    biases: 13
+    biases: 16
+    biases: 30
+    biases: 33
+    biases: 23
+    biases: 30
+    biases: 61
+    biases: 62
+    biases: 45
+    biases: 59
+    biases: 119
+    biases: 116
+    biases: 90
+    biases: 156
+    biases: 198
+    biases: 373
+    biases: 326
+    test_mAP: false
+  }
+}
+
