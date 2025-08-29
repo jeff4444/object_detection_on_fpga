@@ -3,7 +3,9 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <map>
 #include <filesystem>
+#include <algorithm>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -16,6 +18,7 @@ namespace fs = std::filesystem;
 struct Box {
     int label;
     float xmin, ymin, xmax, ymax;
+    float score; // prediction confidence
 };
 
 // Compute IoU between two boxes
@@ -51,6 +54,7 @@ vector<Box> read_labels(const string& label_file, int img_w, int img_h) {
         b.ymin = (cy - h/2) * img_h;
         b.xmax = (cx + w/2) * img_w;
         b.ymax = (cy + h/2) * img_h;
+        b.score = 1.0f; // ground truth has score 1
         gts.push_back(b);
     }
     return gts;
@@ -67,11 +71,15 @@ int main(int argc, char* argv[]) {
 
     auto yolo = vitis::ai::YOLOv3::create(model_name, true);
 
-    int TP = 0, FP = 0, FN = 0;
     float iou_threshold = 0.5;
 
     string images_dir = dataset_dir + "/images";
     string labels_dir = dataset_dir + "/labels";
+
+    // per-class storage
+    map<int, vector<float>> class_confidences;
+    map<int, vector<int>> class_tp_fp;
+    map<int, int> class_fn;
 
     for (auto& entry : fs::directory_iterator(images_dir)) {
         if (entry.path().extension() == ".jpg") {
@@ -81,13 +89,9 @@ int main(int argc, char* argv[]) {
             Mat img = imread(img_path);
             if (img.empty()) continue;
 
-            // Load ground truth boxes
             auto gts = read_labels(label_path, img.cols, img.rows);
-
-            // Run YOLO inference
             auto results = yolo->run(img);
 
-            // Convert predictions to pixel boxes
             vector<Box> preds;
             for (auto& b : results.bboxes) {
                 Box pb;
@@ -96,35 +100,63 @@ int main(int argc, char* argv[]) {
                 pb.ymin = b.y * img.rows;
                 pb.xmax = pb.xmin + b.width * img.cols;
                 pb.ymax = pb.ymin + b.height * img.rows;
+                pb.score = b.score;
                 preds.push_back(pb);
             }
 
-            // Match predictions to ground truth
+            // Sort predictions by confidence descending
+            sort(preds.begin(), preds.end(), [](const Box& a, const Box& b) { return a.score > b.score; });
+
             vector<bool> matched(gts.size(), false);
+
             for (auto& p : preds) {
                 bool found_match = false;
                 for (size_t i = 0; i < gts.size(); i++) {
-                    if (p.label == gts[i].label && iou(p, gts[i]) >= iou_threshold) {
+                    if (p.label == gts[i].label && !matched[i] && iou(p, gts[i]) >= iou_threshold) {
                         matched[i] = true;
                         found_match = true;
                         break;
                     }
                 }
-                if (found_match) TP++; else FP++;
+                class_confidences[p.label].push_back(p.score);
+                class_tp_fp[p.label].push_back(found_match ? 1 : 0); // 1=TP,0=FP
             }
+
+            // count unmatched ground truth boxes as FN
             for (size_t i = 0; i < gts.size(); i++) {
-                if (!matched[i]) FN++;
+                if (!matched[i]) class_fn[gts[i].label]++;
             }
         }
     }
 
-    float precision = TP / float(TP + FP + 1e-6);
-    float recall = TP / float(TP + FN + 1e-6);
-    float f1 = 2 * precision * recall / (precision + recall + 1e-6);
+    // Compute per-class precision, recall, F1
+    float sum_ap = 0;
+    int num_classes = class_confidences.size();
 
-    cout << "Precision: " << precision << endl;
-    cout << "Recall: " << recall << endl;
-    cout << "F1 Score: " << f1 << endl;
+    cout << "Per-class metrics:" << endl;
+    for (auto& kv : class_confidences) {
+        int cls = kv.first;
+        auto& scores = kv.second;
+        auto& tp_fp = class_tp_fp[cls];
+
+        int TP = count(tp_fp.begin(), tp_fp.end(), 1);
+        int FP = count(tp_fp.begin(), tp_fp.end(), 0);
+        int FN = class_fn[cls];
+
+        float precision = TP / float(TP + FP + 1e-6);
+        float recall = TP / float(TP + FN + 1e-6);
+        float f1 = 2 * precision * recall / (precision + recall + 1e-6);
+
+        cout << "Class " << cls << ": Precision=" << precision
+             << ", Recall=" << recall << ", F1=" << f1 << endl;
+
+        // VOC mAP approximation: AP = TP / (TP + FP + FN)
+        float ap = TP / float(TP + FP + FN + 1e-6);
+        sum_ap += ap;
+    }
+
+    float mAP = sum_ap / num_classes;
+    cout << "VOC-style mAP @0.5 IoU: " << mAP << endl;
 
     return 0;
 }
