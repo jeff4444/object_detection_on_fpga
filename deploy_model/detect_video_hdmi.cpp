@@ -5,6 +5,7 @@
 #include <vitis/ai/yolov3.hpp>
 
 #include <linux/fb.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>

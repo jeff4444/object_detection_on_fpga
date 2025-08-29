@@ -151,6 +151,13 @@ Benchmarks real-time performance and displays FPS metrics.
 ```
 Evaluates model performance on validation dataset.
 
+### DEMO
+### Demo Video
+[![Traffic Detection Demo](inference_flow.jpeg)](https://youtu.be/lTDqHEZKfvg)
+
+Click the image above to watch our demo video showcasing real-time traffic detection on the ZCU104 board.
+
+
 ## 🔗 References
 - [YOLOv3 Repository](https://github.com/ultralytics/yolov3)
 - [Vitis AI User Guide 3.0](https://docs.amd.com/r/3.0-English/ug1414-vitis-ai/Vitis-AI-Overview)
