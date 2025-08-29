@@ -18,8 +18,10 @@ int main(int argc, char* argv[]) {
     // Load YOLO model
     auto yolo = vitis::ai::YOLOv3::create(model_name, true);
 
+    string pipeline = "v4l2src device=/dev/video0 ! video/x-raw, width=640, height=480, framerate=30/1 ! videoconvert ! appsink";
+
     // Open camera (/dev/video0)
-    VideoCapture cap(0); // 0 usually maps to /dev/video0
+    VideoCapture cap(pipeline, CAP_GSTREAMER);
     if (!cap.isOpened()) {
         cerr << "Error: could not open camera /dev/video0" << endl;
         return -1;
