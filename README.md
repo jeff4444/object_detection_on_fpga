@@ -152,10 +152,7 @@ Benchmarks real-time performance and displays FPS metrics.
 Evaluates model performance on validation dataset.
 
 ### DEMO
-### Demo Video
-[![Traffic Detection Demo](inference_flow.jpeg)](https://youtu.be/lTDqHEZKfvg)
-
-Click the image above to watch our demo video showcasing real-time traffic detection on the ZCU104 board.
+Watch our demo video showcasing real-time traffic detection on the ZCU104 board: https://youtu.be/lTDqHEZKfvg
 
 
 ## 🔗 References
