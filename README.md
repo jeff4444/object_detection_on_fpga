@@ -127,6 +127,10 @@ cd deploy_model
 - **`test_accuracy`**: Comprehensive accuracy metrics (precision, recall, mAP)
 - **`test_video_perf`**: FPS and latency benchmarking
 
+### Inference flow
+![Inference Flow](inference_flow.jpeg)
+
+
 ## 🎥 Usage Examples
 
 ### Real-time Traffic Detection (HDMI)
